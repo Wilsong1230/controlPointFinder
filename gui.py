@@ -123,6 +123,10 @@ class ControlPointApp:
         try:
             result = run_batch(input_folder, output_folder)
 
+            self.log("PDFs found:")
+            for pdf in result["found_pdfs"]:
+                self.log(f" - {pdf}")
+
             self.log("")
             self.log("Extraction complete.")
             self.log(f"PDFs processed: {result['pdf_count']}")

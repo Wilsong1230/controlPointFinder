@@ -16,7 +16,10 @@ def run_batch(input_folder, output_folder):
 
     output_folder.mkdir(exist_ok=True)
 
-    pdf_paths = sorted(input_folder.rglob("*.pdf"))
+    pdf_paths = sorted(
+    path for path in input_folder.rglob("*")
+    if path.is_file() and path.suffix.lower() == ".pdf"
+)
 
     print(f"Searching recursively in: {input_folder}")
     print(f"Found {len(pdf_paths)} PDFs:")
@@ -72,4 +75,5 @@ def run_batch(input_folder, output_folder):
         "results": results,
         "combined_csv": str(combined_csv_path),
         "total_records": len(all_valid_records),
+        "found_pdfs": [str(path.relative_to(input_folder)) for path in pdf_paths],
     }
