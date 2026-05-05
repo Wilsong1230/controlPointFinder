@@ -17,12 +17,24 @@ def run_batch(input_folder, output_folder):
     output_folder.mkdir(exist_ok=True)
 
     pdf_paths = sorted(input_folder.rglob("*.pdf"))
+
+    print(f"Searching recursively in: {input_folder}")
+    print(f"Found {len(pdf_paths)} PDFs:")
+
+    for pdf_path in pdf_paths:
+        print(f" - {pdf_path}")
+
     results = []
     all_valid_records = []
 
     for pdf_path in pdf_paths:
-        output_csv_path = make_output_csv_path(pdf_path, input_folder, output_folder)
+        output_csv_path = make_output_csv_path(
+            pdf_path,
+            input_folder,
+            output_folder
+        )
 
+        # rest of your loop...
         try:
             result = run_control_point_pipeline(
                 str(pdf_path),
