@@ -6,11 +6,15 @@ INPUT_FOLDER = Path("input_pdfs")
 OUTPUT_FOLDER = Path("outputs")
 
 def make_output_csv_path(pdf_path):
-    csv_name = pdf_path.stem + "_control_points.csv"
+    relative_path = pdf_path.relative_to(INPUT_FOLDER)
+
+    safe_name = "_".join(relative_path.with_suffix("").parts)
+    csv_name = safe_name + "_control_points.csv"
+
     return OUTPUT_FOLDER / csv_name
 
-def write_batch_report(results):
-    report_path = OUTPUT_FOLDER / "batch_report.csv"
+def write_batch_report(results, output_folder):
+    report_path = output_folder / "batch_report.csv"
 
     fieldnames = [
         "pdf",
@@ -42,7 +46,7 @@ def write_batch_report(results):
 def main():
     OUTPUT_FOLDER.mkdir(exist_ok=True)
 
-    pdf_paths = sorted(INPUT_FOLDER.glob("*.pdf"))
+    pdf_paths = sorted(INPUT_FOLDER.rglob("*.pdf"))
 
     if not pdf_paths:
         print(f"No PDFs found in {INPUT_FOLDER}")

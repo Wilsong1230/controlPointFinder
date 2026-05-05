@@ -3,8 +3,10 @@ from pathlib import Path
 from control_point import run_control_point_pipeline, write_csv
 
 
-def make_output_csv_path(pdf_path, output_folder):
-    csv_name = pdf_path.stem + "_control_points.csv"
+def make_output_csv_path(pdf_path, input_folder, output_folder):
+    relative_path = pdf_path.relative_to(input_folder)
+    safe_name = "_".join(relative_path.with_suffix("").parts)
+    csv_name = safe_name + "_control_points.csv"
     return output_folder / csv_name
 
 
@@ -14,13 +16,12 @@ def run_batch(input_folder, output_folder):
 
     output_folder.mkdir(exist_ok=True)
 
-    pdf_paths = sorted(input_folder.glob("*.pdf"))
-
+    pdf_paths = sorted(input_folder.rglob("*.pdf"))
     results = []
     all_valid_records = []
 
     for pdf_path in pdf_paths:
-        output_csv_path = make_output_csv_path(pdf_path, output_folder)
+        output_csv_path = make_output_csv_path(pdf_path, input_folder, output_folder)
 
         try:
             result = run_control_point_pipeline(
@@ -31,7 +32,7 @@ def run_batch(input_folder, output_folder):
             all_valid_records.extend(result["records"])
 
             results.append({
-                "pdf": pdf_path.name,
+                "pdf": str(pdf_path.relative_to(input_folder)),
                 "output_csv": str(output_csv_path),
                 "extraction_pages": result["extraction_pages"],
                 "reference_pages": result["reference_pages"],
