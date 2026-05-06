@@ -3,19 +3,23 @@ from pathlib import Path
 from control_point import run_control_point_pipeline, write_csv
 from output_control import deduplicate_output_csv
 
+INDIVIDUAL_CSV_FOLDER = "individual_csvs"
 
-def make_output_csv_path(pdf_path, input_folder, output_folder):
+
+def make_output_csv_path(pdf_path, input_folder, individual_output_folder):
     relative_path = pdf_path.relative_to(input_folder)
     safe_name = "_".join(relative_path.with_suffix("").parts)
     csv_name = safe_name + "_control_points.csv"
-    return output_folder / csv_name
+    return individual_output_folder / csv_name
 
 
 def run_batch(input_folder, output_folder):
     input_folder = Path(input_folder)
     output_folder = Path(output_folder)
+    individual_output_folder = output_folder / INDIVIDUAL_CSV_FOLDER
 
-    output_folder.mkdir(exist_ok=True)
+    output_folder.mkdir(parents=True, exist_ok=True)
+    individual_output_folder.mkdir(parents=True, exist_ok=True)
 
     pdf_paths = sorted(
     path for path in input_folder.rglob("*")
@@ -35,7 +39,7 @@ def run_batch(input_folder, output_folder):
         output_csv_path = make_output_csv_path(
             pdf_path,
             input_folder,
-            output_folder
+            individual_output_folder
         )
 
         # rest of your loop...
@@ -76,6 +80,7 @@ def run_batch(input_folder, output_folder):
         "pdf_count": len(pdf_paths),
         "results": results,
         "combined_csv": str(combined_csv_path),
+        "individual_csv_folder": str(individual_output_folder),
         "total_records": deduplication_result["unique_count"],
         "duplicate_points_removed": deduplication_result["duplicates_removed"],
         "found_pdfs": [str(path.relative_to(input_folder)) for path in pdf_paths],

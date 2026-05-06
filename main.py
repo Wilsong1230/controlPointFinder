@@ -5,14 +5,15 @@ import csv
 
 INPUT_FOLDER = Path("input_pdfs")
 OUTPUT_FOLDER = Path("outputs")
+INDIVIDUAL_CSV_FOLDER = "individual_csvs"
 
-def make_output_csv_path(pdf_path):
+def make_output_csv_path(pdf_path, individual_output_folder):
     relative_path = pdf_path.relative_to(INPUT_FOLDER)
 
     safe_name = "_".join(relative_path.with_suffix("").parts)
     csv_name = safe_name + "_control_points.csv"
 
-    return OUTPUT_FOLDER / csv_name
+    return individual_output_folder / csv_name
 
 def write_batch_report(results, output_folder):
     report_path = output_folder / "batch_report.csv"
@@ -45,7 +46,10 @@ def write_batch_report(results, output_folder):
     print(f"Wrote batch report: {report_path}")
 
 def main():
-    OUTPUT_FOLDER.mkdir(exist_ok=True)
+    individual_output_folder = OUTPUT_FOLDER / INDIVIDUAL_CSV_FOLDER
+
+    OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+    individual_output_folder.mkdir(parents=True, exist_ok=True)
 
     pdf_paths = sorted(INPUT_FOLDER.rglob("*.pdf"))
 
@@ -63,7 +67,7 @@ def main():
         print()
         print(f"Processing: {pdf_path.name}")
 
-        output_csv_path = make_output_csv_path(pdf_path)
+        output_csv_path = make_output_csv_path(pdf_path, individual_output_folder)
 
         try:
             result = run_control_point_pipeline(
@@ -105,6 +109,7 @@ def main():
     write_csv(all_valid_records, str(combined_csv_path))
     deduplication_result = deduplicate_output_csv(combined_csv_path)
     print(f"Wrote combined CSV: {combined_csv_path}")
+    print(f"Wrote individual CSVs to: {individual_output_folder}")
     print(
         "Removed "
         f"{deduplication_result['duplicates_removed']} duplicate point(s). "

@@ -132,6 +132,7 @@ class ControlPointApp:
             self.log(f"PDFs processed: {result['pdf_count']}")
             self.log(f"Total records extracted: {result['total_records']}")
             self.log(f"Combined CSV: {result['combined_csv']}")
+            self.log(f"Individual CSV folder: {result['individual_csv_folder']}")
 
             self.log("")
             self.log("Per-file results:")
