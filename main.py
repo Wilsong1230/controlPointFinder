@@ -1,4 +1,5 @@
 from control_point import run_control_point_pipeline, write_csv
+from output_control import deduplicate_output_csv
 from pathlib import Path
 import csv
 
@@ -102,7 +103,13 @@ def main():
 
     combined_csv_path = OUTPUT_FOLDER / "all_control_points.csv"
     write_csv(all_valid_records, str(combined_csv_path))
+    deduplication_result = deduplicate_output_csv(combined_csv_path)
     print(f"Wrote combined CSV: {combined_csv_path}")
+    print(
+        "Removed "
+        f"{deduplication_result['duplicates_removed']} duplicate point(s). "
+        f"Final total: {deduplication_result['unique_count']}"
+    )
 
     print()
     print("Batch Summary")
@@ -115,7 +122,7 @@ def main():
             f"{result['valid_count']} records | "
             f"pages {result['extraction_pages']}"
         )
-    write_batch_report(results)
+    write_batch_report(results, OUTPUT_FOLDER)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from control_point import run_control_point_pipeline, write_csv
+from output_control import deduplicate_output_csv
 
 
 def make_output_csv_path(pdf_path, input_folder, output_folder):
@@ -69,11 +70,13 @@ def run_batch(input_folder, output_folder):
 
     combined_csv_path = output_folder / "all_control_points.csv"
     write_csv(all_valid_records, str(combined_csv_path))
+    deduplication_result = deduplicate_output_csv(combined_csv_path)
 
     return {
         "pdf_count": len(pdf_paths),
         "results": results,
         "combined_csv": str(combined_csv_path),
-        "total_records": len(all_valid_records),
+        "total_records": deduplication_result["unique_count"],
+        "duplicate_points_removed": deduplication_result["duplicates_removed"],
         "found_pdfs": [str(path.relative_to(input_folder)) for path in pdf_paths],
     }
