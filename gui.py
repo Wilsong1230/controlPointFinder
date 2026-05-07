@@ -2,6 +2,8 @@ import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import ttk
+import base64
 
 from batch import (
     run_batch_packaged,
@@ -10,30 +12,44 @@ from batch import (
     run_single_folder,
 )
 
+import fitz
+import pdfplumber
+
+from control_point import extract_project_metadata, scanner, extract_control_points, find_best_table
+from data_validation import validate_and_normalize_records
+
 
 class ControlPointApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Control Point Extractor")
-        self.root.geometry("700x500")
+        self.root.geometry("1200x700")
 
         self.input_mode = tk.StringVar(value="folder")  # "folder" | "single"
         self.output_mode = tk.StringVar(value="zip")  # "zip" | "folder"
         self.input_path = tk.StringVar()
         self.output_package = tk.StringVar()
 
+        self._preview_pdf_path: str | None = None
+        self._preview_flagged_records: list[dict] = []
+        self._preview_image_photo = None
+
         self.build_ui()
 
     def build_ui(self):
-        title = tk.Label(
-            self.root,
-            text="Control Point PDF Extractor",
-            font=("Arial", 18, "bold")
-        )
+        title = tk.Label(self.root, text="Control Point PDF Extractor", font=("Arial", 18, "bold"))
         title.pack(pady=10)
 
-        input_frame = tk.Frame(self.root)
-        input_frame.pack(fill="x", padx=20, pady=5)
+        main = tk.PanedWindow(self.root, orient=tk.HORIZONTAL, sashrelief=tk.RAISED)
+        main.pack(fill="both", expand=True, padx=10, pady=10)
+
+        left = tk.Frame(main)
+        right = tk.Frame(main)
+        main.add(left, minsize=650)
+        main.add(right, minsize=450)
+
+        input_frame = tk.Frame(left)
+        input_frame.pack(fill="x", padx=10, pady=5)
 
         mode_row = tk.Frame(input_frame)
         mode_row.pack(fill="x")
@@ -72,8 +88,8 @@ class ControlPointApp:
             command=self.select_input
         ).pack(side="left", padx=5)
 
-        output_frame = tk.Frame(self.root)
-        output_frame.pack(fill="x", padx=20, pady=5)
+        output_frame = tk.Frame(left)
+        output_frame.pack(fill="x", padx=10, pady=5)
 
         output_mode_row = tk.Frame(output_frame)
         output_mode_row.pack(fill="x")
@@ -112,16 +128,45 @@ class ControlPointApp:
             command=self.select_output_destination
         ).pack(side="left", padx=5)
 
-        self.run_button = tk.Button(
-            self.root,
-            text="Run Extraction",
-            command=self.run_extraction,
-            height=2
-        )
-        self.run_button.pack(pady=15)
+        action_row = tk.Frame(left)
+        action_row.pack(fill="x", padx=10, pady=10)
 
-        self.log_box = scrolledtext.ScrolledText(self.root, height=15)
-        self.log_box.pack(fill="both", expand=True, padx=20, pady=10)
+        self.run_button = tk.Button(action_row, text="Run Extraction", command=self.run_extraction, height=2)
+        self.run_button.pack(side="left")
+
+        self.preview_button = tk.Button(
+            action_row,
+            text="Preview Flagged Rows",
+            command=self.preview_flagged_rows,
+            height=2,
+        )
+        self.preview_button.pack(side="left", padx=10)
+
+        self.log_box = scrolledtext.ScrolledText(left, height=18)
+        self.log_box.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # --- Preview panel (right side) ---
+        preview_title = tk.Label(right, text="Preview (flagged rows)", font=("Arial", 12, "bold"))
+        preview_title.pack(anchor="w", padx=10, pady=(0, 6))
+
+        self.preview_listbox = tk.Listbox(right, height=7)
+        self.preview_listbox.pack(fill="x", padx=10, pady=(0, 8))
+        self.preview_listbox.bind("<<ListboxSelect>>", self._on_preview_select)
+
+        self.preview_panes = tk.PanedWindow(right, orient=tk.VERTICAL, sashrelief=tk.RAISED)
+        self.preview_panes.pack(fill="both", expand=True, padx=10, pady=10)
+
+        table_frame = tk.LabelFrame(self.preview_panes, text="Extracted Table (best guess)")
+        page_frame = tk.LabelFrame(self.preview_panes, text="PDF Page Preview")
+
+        self.preview_panes.add(table_frame, minsize=220)
+        self.preview_panes.add(page_frame, minsize=220)
+
+        self.preview_table_text = scrolledtext.ScrolledText(table_frame, height=14)
+        self.preview_table_text.pack(fill="both", expand=True)
+
+        self.preview_page_canvas = tk.Canvas(page_frame, bg="black")
+        self.preview_page_canvas.pack(fill="both", expand=True)
 
     def select_input(self):
         mode = self.input_mode.get()
@@ -232,6 +277,152 @@ class ControlPointApp:
             args=(input_value, output_destination)
         )
         thread.start()
+
+    def _select_preview_pdf(self) -> str | None:
+        input_value = self.input_path.get()
+        if not input_value:
+            return None
+
+        if self.input_mode.get() == "single":
+            return input_value
+
+        folder = Path(input_value)
+        if not folder.exists():
+            return None
+
+        chosen = filedialog.askopenfilename(
+            title="Select a PDF to preview",
+            initialdir=str(folder.resolve()),
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        )
+        return chosen or None
+
+    def preview_flagged_rows(self):
+        pdf_path = self._select_preview_pdf()
+        if not pdf_path:
+            if self.input_mode.get() == "single":
+                messagebox.showerror("Missing PDF", "Please select a PDF file.")
+            else:
+                messagebox.showerror("Missing Folder", "Please select a PDF folder (then choose a PDF to preview).")
+            return
+
+        self.preview_button.config(state="disabled")
+        self.log("Preview: extracting + validating (no export)…")
+
+        thread = threading.Thread(target=self.preview_flagged_rows_thread, args=(pdf_path,))
+        thread.start()
+
+    def preview_flagged_rows_thread(self, pdf_path: str):
+        try:
+            log = self.log_threadsafe
+            log(f"Preview PDF: {Path(pdf_path).name}")
+
+            metadata = extract_project_metadata(pdf_path)
+            extraction_page_indices, _ = scanner(pdf_path, log=None, verbose=False)
+            records = extract_control_points(pdf_path, extraction_page_indices, log=None)
+
+            for record in records:
+                record["horizontal_datum"] = metadata["horizontal_datum"]
+                record["vertical_datum"] = metadata["vertical_datum"]
+                record["coordinate_system"] = metadata["coordinate_system"]
+                record["source_pdf"] = Path(pdf_path).name
+
+            records = validate_and_normalize_records(records, log=None)
+            flagged = [
+                record for record in records
+                if (record.get("validation_status") or "") != "ok"
+                or (record.get("validation_flags") or "")
+            ]
+
+            self.root.after(0, lambda: self._populate_preview_panel(pdf_path, flagged))
+
+        except Exception as error:
+            self.log_threadsafe(f"ERROR (preview): {error}")
+            self.root.after(0, lambda: messagebox.showerror("Preview Error", str(error)))
+        finally:
+            self.root.after(0, lambda: self.preview_button.config(state="normal"))
+
+    def _populate_preview_panel(self, pdf_path: str, flagged_records: list[dict]):
+        self._preview_pdf_path = pdf_path
+        self._preview_flagged_records = list(flagged_records or [])
+
+        self.preview_listbox.delete(0, tk.END)
+        self.preview_table_text.delete("1.0", tk.END)
+        self.preview_page_canvas.delete("all")
+
+        if not self._preview_flagged_records:
+            self.preview_table_text.insert(
+                tk.END,
+                "No suspicious/invalid rows were detected for this PDF.\n"
+                "Nothing to preview here.\n",
+            )
+            self.preview_page_canvas.create_text(
+                20, 20, anchor="nw", fill="white", text="No flagged rows."
+            )
+            return
+
+        for rec in self._preview_flagged_records:
+            pt = rec.get("point_normalized") or rec.get("point") or "?"
+            pg = rec.get("source_page") or "?"
+            flags = rec.get("validation_flags") or rec.get("validation_status") or ""
+            self.preview_listbox.insert(tk.END, f"Pt {pt} | p{pg} | {flags}")
+
+        self.preview_listbox.selection_set(0)
+        self._render_preview_index(0)
+
+    def _on_preview_select(self, event):
+        sel = self.preview_listbox.curselection()
+        if not sel:
+            return
+        self._render_preview_index(sel[0])
+
+    def _render_preview_index(self, index: int):
+        if not self._preview_pdf_path or not self._preview_flagged_records:
+            return
+
+        rec = self._preview_flagged_records[index]
+        page_num = int(rec.get("source_page") or 1)
+        page_index = max(0, page_num - 1)
+
+        # Table grid
+        self.preview_table_text.delete("1.0", tk.END)
+        try:
+            with pdfplumber.open(self._preview_pdf_path) as pdf:
+                page = pdf.pages[page_index]
+                table, score = find_best_table(page)
+                self.preview_table_text.insert(tk.END, f"Page {page_num} | confidence score {score}\n")
+                self.preview_table_text.insert(tk.END, f"Flags: {rec.get('validation_flags') or rec.get('validation_status')}\n\n")
+                if not table:
+                    self.preview_table_text.insert(tk.END, "No table detected on this page.\n")
+                else:
+                    for row in table:
+                        safe = [(cell or "").replace("\n", " ").strip() for cell in row]
+                        self.preview_table_text.insert(tk.END, "\t".join(safe) + "\n")
+        except Exception as exc:
+            self.preview_table_text.insert(tk.END, f"Failed to extract table: {exc}\n")
+
+        # Page image (whole page preview)
+        self.preview_page_canvas.delete("all")
+        try:
+            doc = fitz.open(self._preview_pdf_path)
+            page = doc.load_page(page_index)
+            pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
+            png_bytes = pix.tobytes("png")
+            doc.close()
+
+            b64 = base64.b64encode(png_bytes).decode("ascii")
+            photo = tk.PhotoImage(data=b64)
+            self._preview_image_photo = photo  # keep alive
+            self.preview_page_canvas.create_image(0, 0, anchor="nw", image=photo)
+            self.preview_page_canvas.config(scrollregion=(0, 0, photo.width(), photo.height()))
+        except Exception as exc:
+            self.preview_page_canvas.create_text(
+                20,
+                20,
+                anchor="nw",
+                fill="white",
+                text=f"Failed to render page preview: {exc}",
+            )
 
     def run_extraction_thread(self, input_value, output_destination):
         try:

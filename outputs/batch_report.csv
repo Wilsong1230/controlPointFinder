@@ -1,0 +1,2 @@
+pdf,status,valid_count,parsed_count,extraction_pages,reference_pages,output_csv
+Corkscrew Road Phase 2 - 90 Roadway Plans (02-2021).pdf,success,26,26,[18],"[1, 2, 20, 21, 36]",outputs/individual_csvs/pdfs_Corkscrew Road Phase 2 - 90 Roadway Plans (02-2021)_control_points.csv

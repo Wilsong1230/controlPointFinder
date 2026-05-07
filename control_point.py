@@ -4,6 +4,9 @@ import pdfplumber
 import re
 from pathlib import Path
 
+from datum_standardization import standardize_records
+from data_validation import validate_and_normalize_records
+
 
 PDF_PATH = "sample.pdf"
 
@@ -328,6 +331,7 @@ def clean_description(description):
 def write_csv(records, output_path):
     fieldnames = [
         "point",
+        "point_normalized",
         "easting",
         "northing",
         "elevation",
@@ -335,6 +339,17 @@ def write_csv(records, output_path):
         "horizontal_datum",
         "vertical_datum",
         "coordinate_system",
+        "latitude",
+        "longitude",
+        "original_easting",
+        "original_northing",
+        "original_elevation",
+        "original_horizontal_datum",
+        "original_vertical_datum",
+        "conversion_method",
+        "conversion_status",
+        "validation_status",
+        "validation_flags",
         "source_page",
         "source_pdf",
     ]
@@ -366,29 +381,34 @@ def run_control_point_pipeline(pdf_path, output_path, log=None):
 
     records = extract_control_points(pdf_path, extraction_page_indices, log=log)
 
-    valid_records = []
+    all_records = []
 
     for record in records:
-        if validate_record(record):
-            record["horizontal_datum"] = metadata["horizontal_datum"]
-            record["vertical_datum"] = metadata["vertical_datum"]
-            record["coordinate_system"] = metadata["coordinate_system"]
-            record["source_pdf"] = Path(pdf_path).name
-            valid_records.append(record)
-        else:
-            if log:
-                log("  Skipped one row due to invalid numeric data.")
+        record["horizontal_datum"] = metadata["horizontal_datum"]
+        record["vertical_datum"] = metadata["vertical_datum"]
+        record["coordinate_system"] = metadata["coordinate_system"]
+        record["source_pdf"] = Path(pdf_path).name
+        all_records.append(record)
 
     if log:
-        log(f"  Writing CSV output ({len(valid_records)} valid record(s))…")
-    write_csv(valid_records, output_path)
+        log("  Validating + normalizing extracted data…")
+    all_records = validate_and_normalize_records(all_records, log=log)
 
+    if log:
+        log("  Standardizing datums (NAD 83 / NAVD 1988)…")
+    all_records = standardize_records(all_records, log=log)
+
+    if log:
+        log(f"  Writing CSV output ({len(all_records)} record(s))…")
+    write_csv(all_records, output_path)
+
+    ok_count = sum(1 for record in all_records if (record.get("validation_status") or "") == "ok")
     return {
         "extraction_pages": [i + 1 for i in extraction_page_indices],
         "reference_pages": [i + 1 for i in reference_page_indices],
         "metadata": metadata,
         "parsed_count": len(records),
-        "valid_count": len(valid_records),
-        "records": valid_records,
+        "valid_count": ok_count,
+        "records": all_records,
         "output_path": output_path,
     }
