@@ -36,6 +36,7 @@ class ControlPointApp:
         self._preview_pdf_path: str | None = None
         self._preview_flagged_records: list[dict] = []
         self._preview_image_photo = None
+        self._progress_total = 0
 
         self.build_ui()
 
@@ -145,6 +146,25 @@ class ControlPointApp:
         )
         self.preview_button.pack(side="left", padx=10)
 
+        # --- Progress ---
+        progress_frame = tk.Frame(left)
+        progress_frame.pack(fill="x", padx=10, pady=(0, 6))
+
+        self.progress_var = tk.DoubleVar(value=0.0)
+        self.progress_bar = ttk.Progressbar(
+            progress_frame,
+            variable=self.progress_var,
+            maximum=100.0,
+            mode="determinate",
+        )
+        self.progress_bar.pack(fill="x")
+
+        self.progress_label = tk.Label(progress_frame, text="Progress: 0/0")
+        self.progress_label.pack(anchor="w", pady=(4, 0))
+
+        self.current_file_label = tk.Label(progress_frame, text="Current PDF: —")
+        self.current_file_label.pack(anchor="w")
+
         self.log_box = scrolledtext.ScrolledText(left, height=18)
         self.log_box.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -253,6 +273,31 @@ class ControlPointApp:
     def log_threadsafe(self, message):
         self.root.after(0, lambda: self.log(message))
 
+    def _reset_progress(self):
+        self._progress_total = 0
+        self.progress_var.set(0.0)
+        self.progress_label.config(text="Progress: 0/0")
+        self.current_file_label.config(text="Current PDF: —")
+
+    def _update_progress_ui(self, payload: dict):
+        phase = payload.get("phase")
+        current = int(payload.get("current") or 0)
+        total = int(payload.get("total") or 0)
+        pdf = str(payload.get("pdf") or "")
+
+        self._progress_total = total
+        shown_name = Path(pdf).name if pdf else "—"
+        self.current_file_label.config(text=f"Current PDF: {shown_name}")
+
+        done = current if phase == "done" else max(0, current - 1)
+        if total <= 0:
+            pct = 0.0
+        else:
+            pct = max(0.0, min(100.0, (done / total) * 100.0))
+
+        self.progress_var.set(pct)
+        self.progress_label.config(text=f"Progress: {done}/{total}")
+
     def run_extraction(self):
         input_value = self.input_path.get()
         output_destination = self.output_package.get()
@@ -274,6 +319,7 @@ class ControlPointApp:
         self.run_button.config(state="disabled")
         self.log_box.delete("1.0", tk.END)
         self.log("Starting extraction...")
+        self._reset_progress()
 
         thread = threading.Thread(
             target=self.run_extraction_thread,
@@ -443,17 +489,18 @@ class ControlPointApp:
     def run_extraction_thread(self, input_value, output_destination):
         try:
             log = self.log_threadsafe
+            progress = lambda payload: self.root.after(0, lambda: self._update_progress_ui(payload))
 
             if self.output_mode.get() == "folder":
                 if self.input_mode.get() == "single":
-                    result = run_single_folder(input_value, output_destination, log=log)
+                    result = run_single_folder(input_value, output_destination, log=log, progress=progress)
                 else:
-                    result = run_batch_folder(input_value, output_destination, log=log)
+                    result = run_batch_folder(input_value, output_destination, log=log, progress=progress)
             else:
                 if self.input_mode.get() == "single":
-                    result = run_single_packaged(input_value, output_destination, log=log)
+                    result = run_single_packaged(input_value, output_destination, log=log, progress=progress)
                 else:
-                    result = run_batch_packaged(input_value, output_destination, log=log)
+                    result = run_batch_packaged(input_value, output_destination, log=log, progress=progress)
 
             log("")
             log("Finishing up…")
@@ -461,6 +508,9 @@ class ControlPointApp:
             log("Extraction complete.")
             log(f"PDFs processed: {result['pdf_count']}")
             log(f"Total records extracted: {result['total_records']}")
+            if "clean_records" in result and "review_records" in result:
+                log(f"Clean export rows: {result.get('clean_records')}")
+                log(f"Needs review rows: {result.get('review_records')}")
             log(f"Output saved to: {result['delivery_path']}")
 
             log("")
@@ -476,7 +526,10 @@ class ControlPointApp:
 
             messagebox.showinfo(
                 "Done",
-                f"Extraction complete.\n\nTotal records: {result['total_records']}"
+                "Extraction complete.\n\n"
+                f"Total records: {result['total_records']}\n"
+                f"Clean export: {result.get('clean_records', '—')}\n"
+                f"Needs review: {result.get('review_records', '—')}"
             )
 
         except Exception as error:

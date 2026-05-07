@@ -306,6 +306,8 @@ def write_csv(records, output_path):
         "confidence_score",
         "confidence_level",
         "confidence_reasons",
+        "review_status",
+        "review_reason",
         "horizontal_datum",
         "vertical_datum",
         "coordinate_system",
