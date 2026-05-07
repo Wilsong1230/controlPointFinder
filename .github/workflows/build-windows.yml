@@ -18,11 +18,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pymupdf pdfplumber pyinstaller
+          pip install requests pyproj pymupdf pdfplumber pyinstaller
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name ControlPointExtractor gui.py
+          pyinstaller --onefile --windowed --name ControlPointExtractor gui.py --hidden-import=requests --hidden-import=pyproj
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
