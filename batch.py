@@ -16,7 +16,7 @@ def make_output_csv_path(pdf_path, input_folder, individual_output_folder):
     return individual_output_folder / csv_name
 
 
-def run_batch(input_folder, output_folder):
+def run_batch(input_folder, output_folder, log=None):
     input_folder = Path(input_folder)
     output_folder = Path(output_folder)
     individual_output_folder = output_folder / INDIVIDUAL_CSV_FOLDER
@@ -29,16 +29,19 @@ def run_batch(input_folder, output_folder):
     if path.is_file() and path.suffix.lower() == ".pdf"
 )
 
-    print(f"Searching recursively in: {input_folder}")
-    print(f"Found {len(pdf_paths)} PDFs:")
-
-    for pdf_path in pdf_paths:
-        print(f" - {pdf_path}")
+    if log:
+        log(f"Searching for PDFs in: {input_folder}")
+        log(f"Found {len(pdf_paths)} PDF(s).")
 
     results = []
     all_valid_records = []
 
-    for pdf_path in pdf_paths:
+    total = len(pdf_paths)
+    for index, pdf_path in enumerate(pdf_paths, start=1):
+        if log:
+            log("")
+            log(f"[{index}/{total}] Processing: {pdf_path.name}")
+            log("  Scanning + extracting control point tables…")
         output_csv_path = make_output_csv_path(
             pdf_path,
             input_folder,
@@ -49,10 +52,14 @@ def run_batch(input_folder, output_folder):
         try:
             result = run_control_point_pipeline(
                 str(pdf_path),
-                str(output_csv_path)
+                str(output_csv_path),
+                log=log
             )
 
             all_valid_records.extend(result["records"])
+            if log:
+                log(f"  Done. Found {result['valid_count']} valid record(s).")
+                log(f"  Saved per-file CSV: {output_csv_path.name}")
 
             results.append({
                 "pdf": str(pdf_path.relative_to(input_folder)),
@@ -65,6 +72,8 @@ def run_batch(input_folder, output_folder):
             })
 
         except Exception as error:
+            if log:
+                log(f"  Failed: {error}")
             results.append({
                 "pdf": pdf_path.name,
                 "output_csv": "",
@@ -76,8 +85,16 @@ def run_batch(input_folder, output_folder):
             })
 
     combined_csv_path = output_folder / "all_control_points.csv"
+    if log:
+        log("")
+        log("Combining results into one CSV…")
     write_csv(all_valid_records, str(combined_csv_path))
     deduplication_result = deduplicate_output_csv(combined_csv_path)
+    if log:
+        log(
+            "Deduplication complete. "
+            f"Removed {deduplication_result['duplicates_removed']} duplicate point(s)."
+        )
 
     return {
         "pdf_count": len(pdf_paths),
@@ -90,7 +107,7 @@ def run_batch(input_folder, output_folder):
     }
 
 
-def run_single(pdf_path, output_folder):
+def run_single(pdf_path, output_folder, log=None):
     pdf_path = Path(pdf_path)
     output_folder = Path(output_folder)
     individual_output_folder = output_folder / INDIVIDUAL_CSV_FOLDER
@@ -100,12 +117,25 @@ def run_single(pdf_path, output_folder):
 
     output_csv_path = individual_output_folder / f"{pdf_path.stem}_control_points.csv"
 
-    result = run_control_point_pipeline(str(pdf_path), str(output_csv_path))
+    if log:
+        log(f"Processing: {pdf_path.name}")
+        log("  Scanning + extracting control point tables…")
+    result = run_control_point_pipeline(str(pdf_path), str(output_csv_path), log=log)
+    if log:
+        log(f"  Done. Found {result['valid_count']} valid record(s).")
+        log(f"  Saved per-file CSV: {output_csv_path.name}")
 
     # For single-file runs, the "combined" output is just the one file.
     combined_csv_path = output_folder / "all_control_points.csv"
+    if log:
+        log("Combining results into one CSV…")
     write_csv(result["records"], str(combined_csv_path))
     deduplication_result = deduplicate_output_csv(combined_csv_path)
+    if log:
+        log(
+            "Deduplication complete. "
+            f"Removed {deduplication_result['duplicates_removed']} duplicate point(s)."
+        )
 
     return {
         "pdf_count": 1,
@@ -169,11 +199,11 @@ def _write_manifest(output_dir, manifest):
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def run_batch_folder(input_folder, output_folder):
+def run_batch_folder(input_folder, output_folder, log=None):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    result = run_batch(input_folder, output_folder)
+    result = run_batch(input_folder, output_folder, log=log)
 
     _write_manifest(
         output_folder,
@@ -200,11 +230,11 @@ def run_batch_folder(input_folder, output_folder):
     }
 
 
-def run_single_folder(pdf_path, output_folder):
+def run_single_folder(pdf_path, output_folder, log=None):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    result = run_single(pdf_path, output_folder)
+    result = run_single(pdf_path, output_folder, log=log)
 
     _write_manifest(
         output_folder,
@@ -231,12 +261,12 @@ def run_single_folder(pdf_path, output_folder):
     }
 
 
-def run_batch_packaged(input_folder, package_path):
+def run_batch_packaged(input_folder, package_path, log=None):
     package_path = Path(package_path)
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
-        result = run_batch(input_folder, tmp_output)
+        result = run_batch(input_folder, tmp_output, log=log)
 
         _write_manifest(
             tmp_output,
@@ -266,12 +296,12 @@ def run_batch_packaged(input_folder, package_path):
     }
 
 
-def run_single_packaged(pdf_path, package_path):
+def run_single_packaged(pdf_path, package_path, log=None):
     package_path = Path(package_path)
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
-        result = run_single(pdf_path, tmp_output)
+        result = run_single(pdf_path, tmp_output, log=log)
 
         _write_manifest(
             tmp_output,

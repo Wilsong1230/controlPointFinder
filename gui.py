@@ -202,6 +202,9 @@ class ControlPointApp:
         self.log_box.see(tk.END)
         self.root.update_idletasks()
 
+    def log_threadsafe(self, message):
+        self.root.after(0, lambda: self.log(message))
+
     def run_extraction(self):
         input_value = self.input_path.get()
         output_destination = self.output_package.get()
@@ -232,32 +235,32 @@ class ControlPointApp:
 
     def run_extraction_thread(self, input_value, output_destination):
         try:
+            log = self.log_threadsafe
+
             if self.output_mode.get() == "folder":
                 if self.input_mode.get() == "single":
-                    result = run_single_folder(input_value, output_destination)
+                    result = run_single_folder(input_value, output_destination, log=log)
                 else:
-                    result = run_batch_folder(input_value, output_destination)
+                    result = run_batch_folder(input_value, output_destination, log=log)
             else:
                 if self.input_mode.get() == "single":
-                    result = run_single_packaged(input_value, output_destination)
+                    result = run_single_packaged(input_value, output_destination, log=log)
                 else:
-                    result = run_batch_packaged(input_value, output_destination)
+                    result = run_batch_packaged(input_value, output_destination, log=log)
 
-            self.log("PDFs found:")
-            for pdf in result["found_pdfs"]:
-                self.log(f" - {pdf}")
+            log("")
+            log("Finishing up…")
 
-            self.log("")
-            self.log("Extraction complete.")
-            self.log(f"PDFs processed: {result['pdf_count']}")
-            self.log(f"Total records extracted: {result['total_records']}")
-            self.log(f"Output: {result['delivery_path']}")
+            log("Extraction complete.")
+            log(f"PDFs processed: {result['pdf_count']}")
+            log(f"Total records extracted: {result['total_records']}")
+            log(f"Output saved to: {result['delivery_path']}")
 
-            self.log("")
-            self.log("Per-file results:")
+            log("")
+            log("Per-file results:")
 
             for item in result["results"]:
-                self.log(
+                log(
                     f"{item['pdf']} | "
                     f"{item['status']} | "
                     f"{item['valid_count']} records | "

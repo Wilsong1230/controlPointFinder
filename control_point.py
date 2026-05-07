@@ -115,7 +115,7 @@ def analyze_page(text):
 
     return classification
 
-def scanner(pdf_path):
+def scanner(pdf_path, log=None, verbose=False):
     extraction_pages = []
     reference_pages = []
 
@@ -127,8 +127,8 @@ def scanner(pdf_path):
 
         classification = analyze_page(text)
 
-        if classification != "OTHER":
-            print(f"Page {page_index + 1}: {classification}")
+        if verbose and classification != "OTHER" and log:
+            log(f"  - Page {page_index + 1}: {classification}")
 
         if classification == "PROJECT_CONTROL_TABLE":
             extraction_pages.append(page_index)
@@ -281,22 +281,25 @@ def validate_record(record):
 
     return True
 
-def extract_control_points(pdf_path, page_indices):
+def extract_control_points(pdf_path, page_indices, log=None):
     
     all_records = []
 
     with pdfplumber.open(pdf_path) as pdf:
         for page_index in page_indices:
-            print(f"Extracting page {page_index + 1}")
+            if log:
+                log(f"  Extracting table from page {page_index + 1}…")
 
             page = pdf.pages[page_index]
             table, score = find_best_table(page)
 
             if table is None:
-                print(f"No table found on page {page_index + 1}")
+                if log:
+                    log(f"  No table detected on page {page_index + 1}.")
                 continue
 
-            print(f"Best table score: {score}")
+            if log:
+                log(f"  Table detected (confidence score {score}). Parsing rows…")
 
             records = parse_vertical_control_table(table)
 
@@ -344,16 +347,24 @@ def write_csv(records, output_path):
         for record in records:
             writer.writerow(record)
 
-def run_control_point_pipeline(pdf_path, output_path):
+def run_control_point_pipeline(pdf_path, output_path, log=None):
     metadata = extract_project_metadata(pdf_path)
 
-    print("Project metadata:")
-    print(metadata)
-    print("-" * 40)
+    if log:
+        log("  Reading project metadata…")
 
-    extraction_page_indices, reference_page_indices = scanner(pdf_path)
+    if log:
+        log("  Scanning pages to find control point tables…")
+    extraction_page_indices, reference_page_indices = scanner(pdf_path, log=log, verbose=False)
 
-    records = extract_control_points(pdf_path, extraction_page_indices)
+    if log:
+        if extraction_page_indices:
+            pages = ", ".join(str(i + 1) for i in extraction_page_indices)
+            log(f"  Found table pages: {pages}.")
+        else:
+            log("  No control point table pages found.")
+
+    records = extract_control_points(pdf_path, extraction_page_indices, log=log)
 
     valid_records = []
 
@@ -365,8 +376,11 @@ def run_control_point_pipeline(pdf_path, output_path):
             record["source_pdf"] = Path(pdf_path).name
             valid_records.append(record)
         else:
-            print("Rejected bad record:", record)
+            if log:
+                log("  Skipped one row due to invalid numeric data.")
 
+    if log:
+        log(f"  Writing CSV output ({len(valid_records)} valid record(s))…")
     write_csv(valid_records, output_path)
 
     return {
