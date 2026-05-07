@@ -6,6 +6,8 @@ from pathlib import Path
 
 from datum_standardization import standardize_records
 from data_validation import validate_and_normalize_records
+from output_control import deduplicate_records, flag_uncertain_duplicates
+from point_id import assign_system_point_ids
 
 
 PDF_PATH = "sample.pdf"
@@ -331,6 +333,8 @@ def clean_description(description):
 def write_csv(records, output_path):
     fieldnames = [
         "point",
+        "system_point_id",
+        "source_point_id",
         "point_normalized",
         "easting",
         "northing",
@@ -350,6 +354,9 @@ def write_csv(records, output_path):
         "conversion_status",
         "validation_status",
         "validation_flags",
+        "dedupe_status",
+        "dedupe_flags",
+        "dedupe_group_id",
         "source_page",
         "source_pdf",
     ]
@@ -399,6 +406,19 @@ def run_control_point_pipeline(pdf_path, output_path, log=None):
     all_records = standardize_records(all_records, log=log)
 
     if log:
+        log("  Deduplicating (exact) + flagging uncertain duplicates…")
+    all_records, exact_removed = deduplicate_records(
+        all_records,
+        log=log,
+        context=Path(pdf_path).name,
+    )
+    all_records = flag_uncertain_duplicates(all_records, log=log, context=Path(pdf_path).name)
+
+    if log:
+        log("  Assigning system point IDs…")
+    all_records = assign_system_point_ids(all_records, log=log)
+
+    if log:
         log(f"  Writing CSV output ({len(all_records)} record(s))…")
     write_csv(all_records, output_path)
 
@@ -409,6 +429,7 @@ def run_control_point_pipeline(pdf_path, output_path, log=None):
         "metadata": metadata,
         "parsed_count": len(records),
         "valid_count": ok_count,
+        "exact_duplicates_removed": exact_removed,
         "records": all_records,
         "output_path": output_path,
     }

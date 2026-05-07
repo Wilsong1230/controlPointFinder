@@ -17,6 +17,8 @@ import pdfplumber
 
 from control_point import extract_project_metadata, scanner, extract_control_points, find_best_table
 from data_validation import validate_and_normalize_records
+from datum_standardization import standardize_records
+from output_control import deduplicate_records, flag_uncertain_duplicates
 
 
 class ControlPointApp:
@@ -328,11 +330,24 @@ class ControlPointApp:
                 record["source_pdf"] = Path(pdf_path).name
 
             records = validate_and_normalize_records(records, log=None)
-            flagged = [
-                record for record in records
-                if (record.get("validation_status") or "") != "ok"
-                or (record.get("validation_flags") or "")
-            ]
+            records = standardize_records(records, log=None)
+            records, _ = deduplicate_records(records, log=None, context="preview")
+            records = flag_uncertain_duplicates(records, log=None, context="preview")
+
+            flagged = []
+            for record in records:
+                if (record.get("validation_status") or "") != "ok":
+                    flagged.append(record)
+                    continue
+                if (record.get("validation_flags") or ""):
+                    flagged.append(record)
+                    continue
+                if (record.get("dedupe_status") or "") == "uncertain":
+                    flagged.append(record)
+                    continue
+                if (record.get("dedupe_flags") or ""):
+                    flagged.append(record)
+                    continue
 
             self.root.after(0, lambda: self._populate_preview_panel(pdf_path, flagged))
 
@@ -362,7 +377,7 @@ class ControlPointApp:
             return
 
         for rec in self._preview_flagged_records:
-            pt = rec.get("point_normalized") or rec.get("point") or "?"
+            pt = rec.get("system_point_id") or rec.get("point_normalized") or rec.get("source_point_id") or rec.get("point") or "?"
             pg = rec.get("source_page") or "?"
             flags = rec.get("validation_flags") or rec.get("validation_status") or ""
             self.preview_listbox.insert(tk.END, f"Pt {pt} | p{pg} | {flags}")

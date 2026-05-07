@@ -1,0 +1,31 @@
+{
+  "last_id": 26,
+  "mapping": {
+    "Florida State Plane, West Zone|745749.277|769996.416|19.482": "CP000019",
+    "Florida State Plane, West Zone|746147.134|770035.758|20.538": "CP000001",
+    "Florida State Plane, West Zone|746643.275|770053.373|20.738": "CP000020",
+    "Florida State Plane, West Zone|747148.145|770106.688|20.187": "CP000002",
+    "Florida State Plane, West Zone|747585.276|770108.364|21.046": "CP000021",
+    "Florida State Plane, West Zone|748204.456|770162.889|20.636": "CP000003",
+    "Florida State Plane, West Zone|748705.277|770170.355|20.105": "CP000022",
+    "Florida State Plane, West Zone|749207.357|770231.961|19.734": "CP000004",
+    "Florida State Plane, West Zone|749774.277|770253.346|20.643": "CP000023",
+    "Florida State Plane, West Zone|750200.808|770295.903|20.482": "CP000005",
+    "Florida State Plane, West Zone|750729.278|770299.339|21.621": "CP000024",
+    "Florida State Plane, West Zone|751202.918|770349.915|19.35": "CP000006",
+    "Florida State Plane, West Zone|751691.278|770356.332|20.141": "CP000025",
+    "Florida State Plane, West Zone|752217.208|770414.878|20.528": "CP000007",
+    "Florida State Plane, West Zone|752653.278|770414.325|19.429": "CP000026",
+    "Florida State Plane, West Zone|752691.071|774080.345|21.84": "CP000012",
+    "Florida State Plane, West Zone|752716.28|772438.545|21.63": "CP000014",
+    "Florida State Plane, West Zone|752760.911|773689.455|23.77": "CP000016",
+    "Florida State Plane, West Zone|752765.281|773055.325|22.74": "CP000018",
+    "Florida State Plane, West Zone|752768.611|773440.675|21.391": "CP000015",
+    "Florida State Plane, West Zone|752817.81|771948.524|20.6": "CP000013",
+    "Florida State Plane, West Zone|752831.431|773359.444|21.929": "CP000017",
+    "Florida State Plane, West Zone|752924.119|771459.273|19.659": "CP000010",
+    "Florida State Plane, West Zone|753097.788|770461.572|20.469": "CP000008",
+    "Florida State Plane, West Zone|753977.368|770510.606|17.858": "CP000009",
+    "Florida State Plane, West Zone|754506.278|770593.313|29.695": "CP000011"
+  }
+}

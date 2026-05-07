@@ -1,5 +1,5 @@
 from control_point import run_control_point_pipeline, write_csv
-from output_control import deduplicate_output_csv
+from output_control import deduplicate_records, flag_uncertain_duplicates
 from pathlib import Path
 import csv
 
@@ -62,6 +62,7 @@ def main():
 
     results = []
     all_valid_records = []
+    exact_duplicates_removed_total = 0
 
     for pdf_path in pdf_paths:
         print()
@@ -76,6 +77,7 @@ def main():
             )
 
             all_valid_records.extend(result["records"])
+            exact_duplicates_removed_total += int(result.get("exact_duplicates_removed") or 0)
 
             results.append({
                 "pdf": pdf_path.name,
@@ -106,14 +108,16 @@ def main():
             print(error)
 
     combined_csv_path = OUTPUT_FOLDER / "all_control_points.csv"
+    all_valid_records, cross_removed = deduplicate_records(all_valid_records, log=None, context="combined")
+    all_valid_records = flag_uncertain_duplicates(all_valid_records, log=None, context="combined")
     write_csv(all_valid_records, str(combined_csv_path))
-    deduplication_result = deduplicate_output_csv(combined_csv_path)
+    removed_total = exact_duplicates_removed_total + cross_removed
     print(f"Wrote combined CSV: {combined_csv_path}")
     print(f"Wrote individual CSVs to: {individual_output_folder}")
     print(
         "Removed "
-        f"{deduplication_result['duplicates_removed']} duplicate point(s). "
-        f"Final total: {deduplication_result['unique_count']}"
+        f"{removed_total} duplicate point(s). "
+        f"Final total: {len(all_valid_records)}"
     )
 
     print()

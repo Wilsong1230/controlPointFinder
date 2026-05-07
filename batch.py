@@ -4,7 +4,7 @@ import tempfile
 import zipfile
 
 from control_point import run_control_point_pipeline, write_csv
-from output_control import deduplicate_output_csv
+from output_control import deduplicate_records, flag_uncertain_duplicates
 
 INDIVIDUAL_CSV_FOLDER = "individual_csvs"
 
@@ -35,6 +35,7 @@ def run_batch(input_folder, output_folder, log=None):
 
     results = []
     all_valid_records = []
+    exact_duplicates_removed_total = 0
 
     total = len(pdf_paths)
     for index, pdf_path in enumerate(pdf_paths, start=1):
@@ -57,6 +58,7 @@ def run_batch(input_folder, output_folder, log=None):
             )
 
             all_valid_records.extend(result["records"])
+            exact_duplicates_removed_total += int(result.get("exact_duplicates_removed") or 0)
             if log:
                 log(f"  Done. Found {result['valid_count']} valid record(s).")
                 log(f"  Saved per-file CSV: {output_csv_path.name}")
@@ -88,12 +90,18 @@ def run_batch(input_folder, output_folder, log=None):
     if log:
         log("")
         log("Combining results into one CSV…")
+    # Deduplicate across PDFs before writing combined output.
+    all_valid_records, cross_removed = deduplicate_records(
+        all_valid_records,
+        log=log,
+        context="combined",
+    )
+    all_valid_records = flag_uncertain_duplicates(all_valid_records, log=log, context="combined")
     write_csv(all_valid_records, str(combined_csv_path))
-    deduplication_result = deduplicate_output_csv(combined_csv_path)
     if log:
         log(
             "Deduplication complete. "
-            f"Removed {deduplication_result['duplicates_removed']} duplicate point(s)."
+            f"Removed {exact_duplicates_removed_total + cross_removed} exact duplicate point(s)."
         )
 
     return {
@@ -101,8 +109,8 @@ def run_batch(input_folder, output_folder, log=None):
         "results": results,
         "combined_csv": str(combined_csv_path),
         "individual_csv_folder": str(individual_output_folder),
-        "total_records": deduplication_result["unique_count"],
-        "duplicate_points_removed": deduplication_result["duplicates_removed"],
+        "total_records": len(all_valid_records),
+        "duplicate_points_removed": exact_duplicates_removed_total + cross_removed,
         "found_pdfs": [str(path.relative_to(input_folder)) for path in pdf_paths],
     }
 
@@ -129,12 +137,17 @@ def run_single(pdf_path, output_folder, log=None):
     combined_csv_path = output_folder / "all_control_points.csv"
     if log:
         log("Combining results into one CSV…")
-    write_csv(result["records"], str(combined_csv_path))
-    deduplication_result = deduplicate_output_csv(combined_csv_path)
+    records, cross_removed = deduplicate_records(
+        result["records"],
+        log=log,
+        context="combined",
+    )
+    records = flag_uncertain_duplicates(records, log=log, context="combined")
+    write_csv(records, str(combined_csv_path))
     if log:
         log(
             "Deduplication complete. "
-            f"Removed {deduplication_result['duplicates_removed']} duplicate point(s)."
+            f"Removed {int(result.get('exact_duplicates_removed') or 0) + cross_removed} duplicate point(s)."
         )
 
     return {
@@ -150,8 +163,8 @@ def run_single(pdf_path, output_folder, log=None):
         }],
         "combined_csv": str(combined_csv_path),
         "individual_csv_folder": str(individual_output_folder),
-        "total_records": deduplication_result["unique_count"],
-        "duplicate_points_removed": deduplication_result["duplicates_removed"],
+        "total_records": len(records),
+        "duplicate_points_removed": int(result.get("exact_duplicates_removed") or 0) + cross_removed,
         "found_pdfs": [pdf_path.name],
     }
 
