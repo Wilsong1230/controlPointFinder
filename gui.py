@@ -3,7 +3,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 
-from batch import run_batch
+from batch import run_batch, run_single
 
 
 class ControlPointApp:
@@ -12,7 +12,8 @@ class ControlPointApp:
         self.root.title("Control Point Extractor")
         self.root.geometry("700x500")
 
-        self.input_folder = tk.StringVar()
+        self.input_mode = tk.StringVar(value="folder")  # "folder" | "single"
+        self.input_path = tk.StringVar()
         self.output_folder = tk.StringVar()
 
         self.build_ui()
@@ -28,12 +29,32 @@ class ControlPointApp:
         input_frame = tk.Frame(self.root)
         input_frame.pack(fill="x", padx=20, pady=5)
 
-        tk.Label(input_frame, text="PDF Folder:").pack(anchor="w")
+        mode_row = tk.Frame(input_frame)
+        mode_row.pack(fill="x")
+
+        tk.Label(mode_row, text="Input Type:").pack(side="left")
+        tk.Radiobutton(
+            mode_row,
+            text="Folder",
+            variable=self.input_mode,
+            value="folder",
+            command=self.on_mode_change,
+        ).pack(side="left", padx=10)
+        tk.Radiobutton(
+            mode_row,
+            text="Single PDF",
+            variable=self.input_mode,
+            value="single",
+            command=self.on_mode_change,
+        ).pack(side="left")
+
+        self.input_label = tk.Label(input_frame, text="PDF Folder:")
+        self.input_label.pack(anchor="w")
 
         input_row = tk.Frame(input_frame)
         input_row.pack(fill="x")
 
-        tk.Entry(input_row, textvariable=self.input_folder).pack(
+        tk.Entry(input_row, textvariable=self.input_path).pack(
             side="left",
             fill="x",
             expand=True
@@ -42,7 +63,7 @@ class ControlPointApp:
         tk.Button(
             input_row,
             text="Browse",
-            command=self.select_input_folder
+            command=self.select_input
         ).pack(side="left", padx=5)
 
         output_frame = tk.Frame(self.root)
@@ -76,14 +97,32 @@ class ControlPointApp:
         self.log_box = scrolledtext.ScrolledText(self.root, height=15)
         self.log_box.pack(fill="both", expand=True, padx=20, pady=10)
 
-    def select_input_folder(self):
-        folder = filedialog.askdirectory(title="Select folder containing PDFs")
+    def on_mode_change(self):
+        mode = self.input_mode.get()
+        self.input_path.set("")
 
-        if folder:
-            self.input_folder.set(folder)
+        if mode == "single":
+            self.input_label.config(text="PDF File:")
+        else:
+            self.input_label.config(text="PDF Folder:")
+
+    def select_input(self):
+        mode = self.input_mode.get()
+
+        if mode == "single":
+            chosen = filedialog.askopenfilename(
+                title="Select a PDF",
+                filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            )
+        else:
+            chosen = filedialog.askdirectory(title="Select folder containing PDFs")
+
+        if chosen:
+            self.input_path.set(chosen)
 
             # Default output folder inside selected folder
-            default_output = Path(folder) / "control_point_outputs"
+            base = Path(chosen).parent if mode == "single" else Path(chosen)
+            default_output = base / "control_point_outputs"
             self.output_folder.set(str(default_output))
 
     def select_output_folder(self):
@@ -98,11 +137,14 @@ class ControlPointApp:
         self.root.update_idletasks()
 
     def run_extraction(self):
-        input_folder = self.input_folder.get()
+        input_value = self.input_path.get()
         output_folder = self.output_folder.get()
 
-        if not input_folder:
-            messagebox.showerror("Missing Folder", "Please select a PDF folder.")
+        if not input_value:
+            if self.input_mode.get() == "single":
+                messagebox.showerror("Missing PDF", "Please select a PDF file.")
+            else:
+                messagebox.showerror("Missing Folder", "Please select a PDF folder.")
             return
 
         if not output_folder:
@@ -115,13 +157,16 @@ class ControlPointApp:
 
         thread = threading.Thread(
             target=self.run_extraction_thread,
-            args=(input_folder, output_folder)
+            args=(input_value, output_folder)
         )
         thread.start()
 
-    def run_extraction_thread(self, input_folder, output_folder):
+    def run_extraction_thread(self, input_value, output_folder):
         try:
-            result = run_batch(input_folder, output_folder)
+            if self.input_mode.get() == "single":
+                result = run_single(input_value, output_folder)
+            else:
+                result = run_batch(input_value, output_folder)
 
             self.log("PDFs found:")
             for pdf in result["found_pdfs"]:

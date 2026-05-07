@@ -85,3 +85,39 @@ def run_batch(input_folder, output_folder):
         "duplicate_points_removed": deduplication_result["duplicates_removed"],
         "found_pdfs": [str(path.relative_to(input_folder)) for path in pdf_paths],
     }
+
+
+def run_single(pdf_path, output_folder):
+    pdf_path = Path(pdf_path)
+    output_folder = Path(output_folder)
+    individual_output_folder = output_folder / INDIVIDUAL_CSV_FOLDER
+
+    output_folder.mkdir(parents=True, exist_ok=True)
+    individual_output_folder.mkdir(parents=True, exist_ok=True)
+
+    output_csv_path = individual_output_folder / f"{pdf_path.stem}_control_points.csv"
+
+    result = run_control_point_pipeline(str(pdf_path), str(output_csv_path))
+
+    # For single-file runs, the "combined" output is just the one file.
+    combined_csv_path = output_folder / "all_control_points.csv"
+    write_csv(result["records"], str(combined_csv_path))
+    deduplication_result = deduplicate_output_csv(combined_csv_path)
+
+    return {
+        "pdf_count": 1,
+        "results": [{
+            "pdf": pdf_path.name,
+            "output_csv": str(output_csv_path),
+            "extraction_pages": result["extraction_pages"],
+            "reference_pages": result["reference_pages"],
+            "parsed_count": result["parsed_count"],
+            "valid_count": result["valid_count"],
+            "status": "success",
+        }],
+        "combined_csv": str(combined_csv_path),
+        "individual_csv_folder": str(individual_output_folder),
+        "total_records": deduplication_result["unique_count"],
+        "duplicate_points_removed": deduplication_result["duplicates_removed"],
+        "found_pdfs": [pdf_path.name],
+    }
