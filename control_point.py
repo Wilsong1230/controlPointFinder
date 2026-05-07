@@ -4,6 +4,7 @@ import pdfplumber
 import re
 from pathlib import Path
 
+from confidence import apply_confidence, find_best_table
 from datum_standardization import standardize_records
 from data_validation import validate_and_normalize_records
 from output_control import deduplicate_records, flag_uncertain_duplicates
@@ -144,49 +145,6 @@ def scanner(pdf_path, log=None, verbose=False):
 
     return extraction_pages, reference_pages
 
-def score_table(table):
-    if not table:
-        return 0
-
-    table_text = ""
-
-    for row in table:
-        for cell in row:
-            if cell:
-                table_text += " " + cell.lower()
-
-    score = 0
-
-    if "reference points" in table_text:
-        score += 10
-    if "vertical control" in table_text:
-        score += 10
-    if "northing" in table_text:
-        score += 5
-    if "easting" in table_text:
-        score += 5
-    if "elevation" in table_text or "elev" in table_text:
-        score += 3
-    if "description" in table_text:
-        score += 2
-
-    return score
-
-def find_best_table(page):
-    tables = page.extract_tables()
-
-    best_table = None
-    best_score = 0
-
-    for table in tables:
-        score = score_table(table)
-
-        if score > best_score:
-            best_score = score
-            best_table = table
-
-    return best_table, best_score
-
 def parse_blob_records(text):
     records = []
 
@@ -204,6 +162,7 @@ def parse_blob_records(text):
             "easting": match.group(3).strip(),
             "elevation": match.group(4).strip(),
             "description": clean_description(match.group(5)),
+            "parse_method": "blob_regex",
         })
 
     return records
@@ -263,6 +222,7 @@ def parse_vertical_control_table(table):
                 "easting": eastings[i].strip(),
                 "elevation": elevations[i].strip(),
                 "description": clean_description(descriptions[i]) if i < len(descriptions) else "",
+                "parse_method": "column_split",
             }
 
             records.append(record)
@@ -310,6 +270,7 @@ def extract_control_points(pdf_path, page_indices, log=None):
 
             for record in records:
                 record["source_page"] = page_index + 1
+                record["table_score"] = score
 
             all_records.extend(records)
 
@@ -340,6 +301,11 @@ def write_csv(records, output_path):
         "northing",
         "elevation",
         "description",
+        "table_score",
+        "parse_method",
+        "confidence_score",
+        "confidence_level",
+        "confidence_reasons",
         "horizontal_datum",
         "vertical_datum",
         "coordinate_system",
@@ -417,6 +383,10 @@ def run_control_point_pipeline(pdf_path, output_path, log=None):
     if log:
         log("  Assigning system point IDs…")
     all_records = assign_system_point_ids(all_records, log=log)
+
+    if log:
+        log("  Scoring confidence + trust signals…")
+    all_records = apply_confidence(all_records)
 
     if log:
         log(f"  Writing CSV output ({len(all_records)} record(s))…")

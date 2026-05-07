@@ -15,7 +15,8 @@ from batch import (
 import fitz
 import pdfplumber
 
-from control_point import extract_project_metadata, scanner, extract_control_points, find_best_table
+from control_point import extract_project_metadata, scanner, extract_control_points
+from confidence import find_best_table
 from data_validation import validate_and_normalize_records
 from datum_standardization import standardize_records
 from output_control import deduplicate_records, flag_uncertain_duplicates
