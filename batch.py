@@ -1,4 +1,7 @@
 from pathlib import Path
+import json
+import tempfile
+import zipfile
 
 from control_point import run_control_point_pipeline, write_csv
 from output_control import deduplicate_output_csv
@@ -120,4 +123,179 @@ def run_single(pdf_path, output_folder):
         "total_records": deduplication_result["unique_count"],
         "duplicate_points_removed": deduplication_result["duplicates_removed"],
         "found_pdfs": [pdf_path.name],
+    }
+
+
+def _zip_directory(source_dir, zip_path):
+    source_dir = Path(source_dir)
+    zip_path = Path(zip_path)
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(source_dir.rglob("*")):
+            if path.is_dir():
+                continue
+            arcname = path.relative_to(source_dir)
+            zf.write(path, arcname)
+
+
+def _unique_path(path):
+    path = Path(path)
+    if not path.exists():
+        return path
+
+    if path.suffix:
+        stem = path.stem
+        suffix = path.suffix
+        parent = path.parent
+        for i in range(1, 10_000):
+            candidate = parent / f"{stem}_{i}{suffix}"
+            if not candidate.exists():
+                return candidate
+        raise RuntimeError(f"Could not find unique path for {path}")
+
+    parent = path.parent
+    name = path.name
+    for i in range(1, 10_000):
+        candidate = parent / f"{name}_{i}"
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"Could not find unique path for {path}")
+
+
+def _write_manifest(output_dir, manifest):
+    output_dir = Path(output_dir)
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def run_batch_folder(input_folder, output_folder):
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    result = run_batch(input_folder, output_folder)
+
+    _write_manifest(
+        output_folder,
+        {
+            "mode": "folder",
+            "input_folder": str(Path(input_folder).resolve()),
+            "summary": {
+                "pdf_count": result["pdf_count"],
+                "total_records": result["total_records"],
+                "duplicate_points_removed": result["duplicate_points_removed"],
+            },
+            "files": {
+                "combined_csv": Path(result["combined_csv"]).name,
+                "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
+            },
+            "found_pdfs": result["found_pdfs"],
+            "results": result["results"],
+        },
+    )
+
+    return {
+        **result,
+        "delivery_path": str(output_folder),
+    }
+
+
+def run_single_folder(pdf_path, output_folder):
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    result = run_single(pdf_path, output_folder)
+
+    _write_manifest(
+        output_folder,
+        {
+            "mode": "single",
+            "input_pdf": str(Path(pdf_path).resolve()),
+            "summary": {
+                "pdf_count": result["pdf_count"],
+                "total_records": result["total_records"],
+                "duplicate_points_removed": result["duplicate_points_removed"],
+            },
+            "files": {
+                "combined_csv": Path(result["combined_csv"]).name,
+                "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
+            },
+            "found_pdfs": result["found_pdfs"],
+            "results": result["results"],
+        },
+    )
+
+    return {
+        **result,
+        "delivery_path": str(output_folder),
+    }
+
+
+def run_batch_packaged(input_folder, package_path):
+    package_path = Path(package_path)
+
+    with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
+        tmp_output = Path(tmpdir)
+        result = run_batch(input_folder, tmp_output)
+
+        _write_manifest(
+            tmp_output,
+            {
+                "mode": "folder",
+                "input_folder": str(Path(input_folder).resolve()),
+                "summary": {
+                    "pdf_count": result["pdf_count"],
+                    "total_records": result["total_records"],
+                    "duplicate_points_removed": result["duplicate_points_removed"],
+                },
+                "files": {
+                    "combined_csv": Path(result["combined_csv"]).name,
+                    "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
+                },
+                "found_pdfs": result["found_pdfs"],
+                "results": result["results"],
+            },
+        )
+
+        package_path = _unique_path(package_path)
+        _zip_directory(tmp_output, package_path)
+
+    return {
+        **result,
+        "delivery_path": str(package_path),
+    }
+
+
+def run_single_packaged(pdf_path, package_path):
+    package_path = Path(package_path)
+
+    with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
+        tmp_output = Path(tmpdir)
+        result = run_single(pdf_path, tmp_output)
+
+        _write_manifest(
+            tmp_output,
+            {
+                "mode": "single",
+                "input_pdf": str(Path(pdf_path).resolve()),
+                "summary": {
+                    "pdf_count": result["pdf_count"],
+                    "total_records": result["total_records"],
+                    "duplicate_points_removed": result["duplicate_points_removed"],
+                },
+                "files": {
+                    "combined_csv": Path(result["combined_csv"]).name,
+                    "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
+                },
+                "found_pdfs": result["found_pdfs"],
+                "results": result["results"],
+            },
+        )
+
+        package_path = _unique_path(package_path)
+        _zip_directory(tmp_output, package_path)
+
+    return {
+        **result,
+        "delivery_path": str(package_path),
     }

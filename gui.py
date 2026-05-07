@@ -3,7 +3,12 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 
-from batch import run_batch, run_single
+from batch import (
+    run_batch_packaged,
+    run_single_packaged,
+    run_batch_folder,
+    run_single_folder,
+)
 
 
 class ControlPointApp:
@@ -13,8 +18,9 @@ class ControlPointApp:
         self.root.geometry("700x500")
 
         self.input_mode = tk.StringVar(value="folder")  # "folder" | "single"
+        self.output_mode = tk.StringVar(value="zip")  # "zip" | "folder"
         self.input_path = tk.StringVar()
-        self.output_folder = tk.StringVar()
+        self.output_package = tk.StringVar()
 
         self.build_ui()
 
@@ -69,12 +75,32 @@ class ControlPointApp:
         output_frame = tk.Frame(self.root)
         output_frame.pack(fill="x", padx=20, pady=5)
 
-        tk.Label(output_frame, text="Output Folder:").pack(anchor="w")
+        output_mode_row = tk.Frame(output_frame)
+        output_mode_row.pack(fill="x")
+
+        tk.Label(output_mode_row, text="Output Type:").pack(side="left")
+        tk.Radiobutton(
+            output_mode_row,
+            text="ZIP",
+            variable=self.output_mode,
+            value="zip",
+            command=self.on_output_mode_change,
+        ).pack(side="left", padx=10)
+        tk.Radiobutton(
+            output_mode_row,
+            text="Folder",
+            variable=self.output_mode,
+            value="folder",
+            command=self.on_output_mode_change,
+        ).pack(side="left")
+
+        self.output_label = tk.Label(output_frame, text="Output Package (.zip):")
+        self.output_label.pack(anchor="w")
 
         output_row = tk.Frame(output_frame)
         output_row.pack(fill="x")
 
-        tk.Entry(output_row, textvariable=self.output_folder).pack(
+        tk.Entry(output_row, textvariable=self.output_package).pack(
             side="left",
             fill="x",
             expand=True
@@ -83,7 +109,7 @@ class ControlPointApp:
         tk.Button(
             output_row,
             text="Browse",
-            command=self.select_output_folder
+            command=self.select_output_destination
         ).pack(side="left", padx=5)
 
         self.run_button = tk.Button(
@@ -96,15 +122,6 @@ class ControlPointApp:
 
         self.log_box = scrolledtext.ScrolledText(self.root, height=15)
         self.log_box.pack(fill="both", expand=True, padx=20, pady=10)
-
-    def on_mode_change(self):
-        mode = self.input_mode.get()
-        self.input_path.set("")
-
-        if mode == "single":
-            self.input_label.config(text="PDF File:")
-        else:
-            self.input_label.config(text="PDF Folder:")
 
     def select_input(self):
         mode = self.input_mode.get()
@@ -119,17 +136,66 @@ class ControlPointApp:
 
         if chosen:
             self.input_path.set(chosen)
+            self.output_package.set(self._default_output_destination(chosen, mode))
 
-            # Default output folder inside selected folder
-            base = Path(chosen).parent if mode == "single" else Path(chosen)
-            default_output = base / "control_point_outputs"
-            self.output_folder.set(str(default_output))
+    def on_mode_change(self):
+        mode = self.input_mode.get()
+        self.input_path.set("")
 
-    def select_output_folder(self):
-        folder = filedialog.askdirectory(title="Select output folder")
+        if mode == "single":
+            self.input_label.config(text="PDF File:")
+        else:
+            self.input_label.config(text="PDF Folder:")
 
-        if folder:
-            self.output_folder.set(folder)
+        # Reset output suggestion since it depends on input location/name.
+        self.output_package.set("")
+
+    def on_output_mode_change(self):
+        self.output_package.set("")
+        if self.output_mode.get() == "folder":
+            self.output_label.config(text="Output Folder:")
+        else:
+            self.output_label.config(text="Output Package (.zip):")
+
+        chosen = self.input_path.get()
+        if chosen:
+            self.output_package.set(self._default_output_destination(chosen, self.input_mode.get()))
+
+    def _default_output_destination(self, chosen, input_mode):
+        base = Path(chosen).parent if input_mode == "single" else Path(chosen)
+        name = Path(chosen).stem if input_mode == "single" else base.name
+
+        if self.output_mode.get() == "folder":
+            return str(base / f"{name}_control_point_outputs")
+
+        return str(base / f"{name}_control_point_outputs.zip")
+
+    def select_output_destination(self):
+        input_mode = self.input_mode.get()
+        chosen_input = self.input_path.get()
+
+        if self.output_mode.get() == "folder":
+            folder = filedialog.askdirectory(title="Select output folder")
+            if folder:
+                self.output_package.set(folder)
+            return
+
+        initialfile = ""
+        initialdir = None
+        if chosen_input:
+            initialdir = str((Path(chosen_input).parent if input_mode == "single" else Path(chosen_input)).resolve())
+            initialfile = Path(self._default_output_destination(chosen_input, input_mode)).name
+
+        path = filedialog.asksaveasfilename(
+            title="Save output package",
+            defaultextension=".zip",
+            filetypes=[("ZIP archive", "*.zip")],
+            initialdir=initialdir,
+            initialfile=initialfile,
+        )
+
+        if path:
+            self.output_package.set(path)
 
     def log(self, message):
         self.log_box.insert(tk.END, message + "\n")
@@ -138,7 +204,7 @@ class ControlPointApp:
 
     def run_extraction(self):
         input_value = self.input_path.get()
-        output_folder = self.output_folder.get()
+        output_destination = self.output_package.get()
 
         if not input_value:
             if self.input_mode.get() == "single":
@@ -147,8 +213,11 @@ class ControlPointApp:
                 messagebox.showerror("Missing Folder", "Please select a PDF folder.")
             return
 
-        if not output_folder:
-            messagebox.showerror("Missing Output", "Please select an output folder.")
+        if not output_destination:
+            if self.output_mode.get() == "folder":
+                messagebox.showerror("Missing Output", "Please choose an output folder.")
+            else:
+                messagebox.showerror("Missing Output", "Please choose where to save the .zip output package.")
             return
 
         self.run_button.config(state="disabled")
@@ -157,16 +226,22 @@ class ControlPointApp:
 
         thread = threading.Thread(
             target=self.run_extraction_thread,
-            args=(input_value, output_folder)
+            args=(input_value, output_destination)
         )
         thread.start()
 
-    def run_extraction_thread(self, input_value, output_folder):
+    def run_extraction_thread(self, input_value, output_destination):
         try:
-            if self.input_mode.get() == "single":
-                result = run_single(input_value, output_folder)
+            if self.output_mode.get() == "folder":
+                if self.input_mode.get() == "single":
+                    result = run_single_folder(input_value, output_destination)
+                else:
+                    result = run_batch_folder(input_value, output_destination)
             else:
-                result = run_batch(input_value, output_folder)
+                if self.input_mode.get() == "single":
+                    result = run_single_packaged(input_value, output_destination)
+                else:
+                    result = run_batch_packaged(input_value, output_destination)
 
             self.log("PDFs found:")
             for pdf in result["found_pdfs"]:
@@ -176,8 +251,7 @@ class ControlPointApp:
             self.log("Extraction complete.")
             self.log(f"PDFs processed: {result['pdf_count']}")
             self.log(f"Total records extracted: {result['total_records']}")
-            self.log(f"Combined CSV: {result['combined_csv']}")
-            self.log(f"Individual CSV folder: {result['individual_csv_folder']}")
+            self.log(f"Output: {result['delivery_path']}")
 
             self.log("")
             self.log("Per-file results:")
