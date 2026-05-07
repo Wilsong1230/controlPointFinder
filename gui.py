@@ -10,7 +10,12 @@ from batch import (
     run_single_packaged,
     run_batch_folder,
     run_single_folder,
+    run_multi,
+    run_multi_packaged,
 )
+
+import os
+import subprocess
 
 import fitz
 import pdfplumber
@@ -28,10 +33,13 @@ class ControlPointApp:
         self.root.title("Control Point Extractor")
         self.root.geometry("1200x700")
 
-        self.input_mode = tk.StringVar(value="folder")  # "folder" | "single"
+        self.input_mode = tk.StringVar(value="folder")  # "folder" | "single" | "multiple"
         self.output_mode = tk.StringVar(value="zip")  # "zip" | "folder"
         self.input_path = tk.StringVar()
         self.output_package = tk.StringVar()
+
+        self._selected_pdfs: list[str] = []
+        self._last_delivery_path: str | None = None
 
         self._preview_pdf_path: str | None = None
         self._preview_flagged_records: list[dict] = []
@@ -73,6 +81,13 @@ class ControlPointApp:
             value="single",
             command=self.on_mode_change,
         ).pack(side="left")
+        tk.Radiobutton(
+            mode_row,
+            text="Multiple PDFs",
+            variable=self.input_mode,
+            value="multiple",
+            command=self.on_mode_change,
+        ).pack(side="left", padx=10)
 
         self.input_label = tk.Label(input_frame, text="PDF Folder:")
         self.input_label.pack(anchor="w")
@@ -138,6 +153,15 @@ class ControlPointApp:
         self.run_button = tk.Button(action_row, text="Run Extraction", command=self.run_extraction, height=2)
         self.run_button.pack(side="left")
 
+        self.open_output_button = tk.Button(
+            action_row,
+            text="Open Output Folder",
+            command=self.open_output_folder,
+            height=2,
+            state="disabled",
+        )
+        self.open_output_button.pack(side="left", padx=10)
+
         self.preview_button = tk.Button(
             action_row,
             text="Preview Flagged Rows",
@@ -199,19 +223,35 @@ class ControlPointApp:
                 title="Select a PDF",
                 filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
             )
+        elif mode == "multiple":
+            chosen = filedialog.askopenfilenames(
+                title="Select PDF files",
+                filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            )
+            chosen = list(chosen or [])
         else:
             chosen = filedialog.askdirectory(title="Select folder containing PDFs")
 
         if chosen:
-            self.input_path.set(chosen)
-            self.output_package.set(self._default_output_destination(chosen, mode))
+            if mode == "multiple":
+                self._selected_pdfs = chosen
+                self.input_path.set(f"{len(self._selected_pdfs)} PDF(s) selected")
+                base_for_default = str(Path(self._selected_pdfs[0]).parent) if self._selected_pdfs else ""
+                self.output_package.set(self._default_output_destination(base_for_default, "folder"))
+            else:
+                self._selected_pdfs = []
+                self.input_path.set(chosen)
+                self.output_package.set(self._default_output_destination(chosen, mode))
 
     def on_mode_change(self):
         mode = self.input_mode.get()
         self.input_path.set("")
+        self._selected_pdfs = []
 
         if mode == "single":
             self.input_label.config(text="PDF File:")
+        elif mode == "multiple":
+            self.input_label.config(text="PDF Files:")
         else:
             self.input_label.config(text="PDF Folder:")
 
@@ -230,6 +270,8 @@ class ControlPointApp:
             self.output_package.set(self._default_output_destination(chosen, self.input_mode.get()))
 
     def _default_output_destination(self, chosen, input_mode):
+        if not chosen:
+            chosen = str(Path.cwd())
         base = Path(chosen).parent if input_mode == "single" else Path(chosen)
         name = Path(chosen).stem if input_mode == "single" else base.name
 
@@ -278,6 +320,8 @@ class ControlPointApp:
         self.progress_var.set(0.0)
         self.progress_label.config(text="Progress: 0/0")
         self.current_file_label.config(text="Current PDF: —")
+        self._last_delivery_path = None
+        self.open_output_button.config(state="disabled")
 
     def _update_progress_ui(self, payload: dict):
         phase = payload.get("phase")
@@ -302,7 +346,11 @@ class ControlPointApp:
         input_value = self.input_path.get()
         output_destination = self.output_package.get()
 
-        if not input_value:
+        if self.input_mode.get() == "multiple":
+            if not self._selected_pdfs:
+                messagebox.showerror("Missing PDFs", "Please select one or more PDF files.")
+                return
+        elif not input_value:
             if self.input_mode.get() == "single":
                 messagebox.showerror("Missing PDF", "Please select a PDF file.")
             else:
@@ -329,6 +377,16 @@ class ControlPointApp:
 
     def _select_preview_pdf(self) -> str | None:
         input_value = self.input_path.get()
+        if self.input_mode.get() == "multiple":
+            if not self._selected_pdfs:
+                return None
+            chosen = filedialog.askopenfilename(
+                title="Select a PDF to preview",
+                initialdir=str(Path(self._selected_pdfs[0]).parent.resolve()),
+                filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            )
+            return chosen or None
+
         if not input_value:
             return None
 
@@ -494,11 +552,15 @@ class ControlPointApp:
             if self.output_mode.get() == "folder":
                 if self.input_mode.get() == "single":
                     result = run_single_folder(input_value, output_destination, log=log, progress=progress)
+                elif self.input_mode.get() == "multiple":
+                    result = run_multi(self._selected_pdfs, output_destination, log=log, progress=progress)
                 else:
                     result = run_batch_folder(input_value, output_destination, log=log, progress=progress)
             else:
                 if self.input_mode.get() == "single":
                     result = run_single_packaged(input_value, output_destination, log=log, progress=progress)
+                elif self.input_mode.get() == "multiple":
+                    result = run_multi_packaged(self._selected_pdfs, output_destination, log=log, progress=progress)
                 else:
                     result = run_batch_packaged(input_value, output_destination, log=log, progress=progress)
 
@@ -512,6 +574,8 @@ class ControlPointApp:
                 log(f"Clean export rows: {result.get('clean_records')}")
                 log(f"Needs review rows: {result.get('review_records')}")
             log(f"Output saved to: {result['delivery_path']}")
+            self._last_delivery_path = result.get("delivery_path")
+            self.root.after(0, lambda: self.open_output_button.config(state="normal"))
 
             log("")
             log("Per-file results:")
@@ -538,6 +602,22 @@ class ControlPointApp:
 
         finally:
             self.run_button.config(state="normal")
+
+    def open_output_folder(self):
+        path = self._last_delivery_path
+        if not path:
+            messagebox.showerror("No Output", "No output folder is available yet.")
+            return
+        p = Path(path)
+        if p.suffix.lower() == ".zip":
+            p = p.parent
+        try:
+            if os.name == "posix":
+                subprocess.run(["open", str(p)], check=False)
+            else:
+                subprocess.run(["xdg-open", str(p)], check=False)
+        except Exception as exc:
+            messagebox.showerror("Open Folder Failed", str(exc))
 
 
 if __name__ == "__main__":
