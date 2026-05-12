@@ -19,6 +19,7 @@ from batch import (
 
 import os
 import subprocess
+from tkinterdnd2 import TkinterDnD, DND_FILES
 
 class ControlPointApp:
     def __init__(self, root):
@@ -663,6 +664,6 @@ class ControlPointApp:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = TkinterDnD.Tk()
     app = ControlPointApp(root)
     root.mainloop()
