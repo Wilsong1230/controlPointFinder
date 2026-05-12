@@ -1,6 +1,4 @@
 import csv
-import fitz
-import pdfplumber
 import re
 from pathlib import Path
 
@@ -15,6 +13,7 @@ PDF_PATH = "sample.pdf"
 
 
 def extract_project_metadata(pdf_path):
+    import fitz
     metadata = {
         "horizontal_datum": "",
         "vertical_datum": "",
@@ -122,6 +121,7 @@ def analyze_page(text):
     return classification
 
 def scanner(pdf_path, log=None, verbose=False):
+    import fitz
     extraction_pages = []
     reference_pages = []
 
@@ -247,7 +247,8 @@ def validate_record(record):
     return True
 
 def extract_control_points(pdf_path, page_indices, log=None):
-    
+    import pdfplumber
+
     all_records = []
 
     with pdfplumber.open(pdf_path) as pdf:
