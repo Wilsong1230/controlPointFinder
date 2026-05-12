@@ -22,10 +22,13 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name ControlPointExtractor gui.py --hidden-import=requests --hidden-import=pyproj
+          pyinstaller --onedir --windowed --name ControlPointExtractor gui.py --hidden-import=requests --hidden-import=pyproj
 
-      - name: Upload EXE
+      - name: Zip output folder
+        run: Compress-Archive -Path dist/ControlPointExtractor -DestinationPath dist/ControlPointExtractor.zip
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ControlPointExtractor-Windows
-          path: dist/ControlPointExtractor.exe
+          path: dist/ControlPointExtractor.zip
