@@ -5,13 +5,14 @@ import tempfile
 import zipfile
 
 from control_point import run_control_point_pipeline, write_csv
-from output_control import deduplicate_records, flag_uncertain_duplicates
+from output_control import deduplicate_records, flag_uncertain_duplicates, write_arcgis_csv
 
 INDIVIDUAL_CSV_FOLDER = "individual_csvs"
 CLEAN_CSV_NAME = "control_points_navd88.csv"
 REVIEW_CSV_NAME = "needs_review.csv"
 LOG_TXT_NAME = "extraction_log.txt"
 SUMMARY_TXT_NAME = "extraction_summary.txt"
+ARCGIS_CSV_NAME = "arcgis_points.csv"
 
 
 def _split_flags(value) -> list[str]:
@@ -20,6 +21,12 @@ def _split_flags(value) -> list[str]:
         return []
     parts = [p.strip() for p in text.split(";")]
     return [p for p in parts if p]
+
+
+def _split_low_confidence(records: list[dict]) -> tuple[list[dict], list[dict]]:
+    low_conf = [r for r in records if r.get("confidence_level") == "low"]
+    other = [r for r in records if r.get("confidence_level") != "low"]
+    return low_conf, other
 
 
 def _review_reasons(record: dict) -> list[str]:
@@ -143,6 +150,7 @@ def _write_summary(output_folder: Path, result: dict, started_at: str, ended_at:
             f"- {Path(result.get('clean_csv') or CLEAN_CSV_NAME).name}",
             f"- {Path(result.get('review_csv') or REVIEW_CSV_NAME).name}",
             f"- {Path(result.get('combined_csv') or 'all_control_points.csv').name}",
+            f"- {ARCGIS_CSV_NAME}",
             f"- {LOG_TXT_NAME}",
             "",
         ]
@@ -151,7 +159,16 @@ def _write_summary(output_folder: Path, result: dict, started_at: str, ended_at:
     return str(summary_path)
 
 
-def _run_pdf_list(pdf_paths: list[Path], *, output_folder: Path, log=None, progress=None, context_label: str = ""):
+def _run_pdf_list(
+    pdf_paths: list[Path],
+    *,
+    output_folder: Path,
+    log=None,
+    progress=None,
+    context_label: str = "",
+    review_request_q=None,
+    review_result_q=None,
+):
     """
     Shared runner for folder mode and multi-select mode.
     """
@@ -227,21 +244,49 @@ def _run_pdf_list(pdf_paths: list[Path], *, output_folder: Path, log=None, progr
     combined_csv_path = output_folder / "all_control_points.csv"
     clean_csv_path = output_folder / CLEAN_CSV_NAME
     review_csv_path = output_folder / REVIEW_CSV_NAME
+    arcgis_csv_path = output_folder / ARCGIS_CSV_NAME
+
     if tee_log:
         tee_log("")
         tee_log("Combining results into one CSV…")
-    # Deduplicate across PDFs before writing combined output.
+
     all_valid_records, cross_removed = deduplicate_records(
-        all_valid_records,
-        log=tee_log,
-        context="combined",
+        all_valid_records, log=tee_log, context="combined",
     )
     all_valid_records = flag_uncertain_duplicates(all_valid_records, log=tee_log, context="combined")
-    write_csv(all_valid_records, str(combined_csv_path))
 
-    clean_records, review_records = split_clean_vs_review(all_valid_records)
+    # --- Review gate ---
+    low_conf, other_records = _split_low_confidence(all_valid_records)
+
+    if low_conf and review_request_q is not None and review_result_q is not None:
+        if tee_log:
+            tee_log(f"  Found {len(low_conf)} low-confidence record(s) — sending to review modal…")
+        pdf_path_map = {p.name: str(p) for p in pdf_paths}
+        review_request_q.put({"low_conf": low_conf, "pdf_path_map": pdf_path_map})
+        modal_result = review_result_q.get()
+        accepted_from_modal = modal_result["accepted"]
+        skipped_from_modal = modal_result["skipped"]
+        for rec in skipped_from_modal:
+            rec["review_status"] = "needs_review"
+            rec["review_reason"] = "skipped_in_modal_review"
+        if tee_log:
+            tee_log(
+                f"  Modal review done: {len(accepted_from_modal)} accepted, "
+                f"{len(skipped_from_modal)} skipped."
+            )
+    else:
+        accepted_from_modal = low_conf
+        skipped_from_modal = []
+
+    merged = other_records + accepted_from_modal
+    clean_records, auto_review_records = split_clean_vs_review(merged)
+    review_records = auto_review_records + skipped_from_modal
+
+    write_csv(clean_records + review_records, str(combined_csv_path))
     write_csv(clean_records, str(clean_csv_path))
     write_csv(review_records, str(review_csv_path))
+    write_arcgis_csv(clean_records, str(arcgis_csv_path))
+
     if tee_log:
         tee_log(
             "Deduplication complete. "
@@ -249,6 +294,7 @@ def _run_pdf_list(pdf_paths: list[Path], *, output_folder: Path, log=None, progr
         )
         tee_log(f"Wrote clean export: {clean_csv_path.name} ({len(clean_records)} row(s))")
         tee_log(f"Wrote needs review: {review_csv_path.name} ({len(review_records)} row(s))")
+        tee_log(f"Wrote ArcGIS CSV:   {arcgis_csv_path.name} ({len(clean_records)} row(s))")
 
     ended_at = _utc_iso_now()
     summary_path = _write_summary(output_folder, {
@@ -257,7 +303,8 @@ def _run_pdf_list(pdf_paths: list[Path], *, output_folder: Path, log=None, progr
         "combined_csv": str(combined_csv_path),
         "clean_csv": str(clean_csv_path),
         "review_csv": str(review_csv_path),
-        "total_records": len(all_valid_records),
+        "arcgis_csv": str(arcgis_csv_path),
+        "total_records": len(clean_records) + len(review_records),
         "clean_records": len(clean_records),
         "review_records": len(review_records),
         "duplicate_points_removed": exact_duplicates_removed_total + cross_removed,
@@ -269,10 +316,11 @@ def _run_pdf_list(pdf_paths: list[Path], *, output_folder: Path, log=None, progr
         "combined_csv": str(combined_csv_path),
         "clean_csv": str(clean_csv_path),
         "review_csv": str(review_csv_path),
+        "arcgis_csv": str(arcgis_csv_path),
         "log_txt": log_path,
         "summary_txt": summary_path,
         "individual_csv_folder": str(individual_output_folder),
-        "total_records": len(all_valid_records),
+        "total_records": len(clean_records) + len(review_records),
         "clean_records": len(clean_records),
         "review_records": len(review_records),
         "duplicate_points_removed": exact_duplicates_removed_total + cross_removed,
@@ -280,7 +328,8 @@ def _run_pdf_list(pdf_paths: list[Path], *, output_folder: Path, log=None, progr
     }
 
 
-def run_batch(input_folder, output_folder, log=None, progress=None):
+def run_batch(input_folder, output_folder, log=None, progress=None,
+              review_request_q=None, review_result_q=None):
     input_folder = Path(input_folder)
     pdf_paths = sorted(
         path for path in input_folder.rglob("*")
@@ -292,10 +341,13 @@ def run_batch(input_folder, output_folder, log=None, progress=None):
         log=log,
         progress=progress,
         context_label=f"Searching for PDFs in: {input_folder}",
+        review_request_q=review_request_q,
+        review_result_q=review_result_q,
     )
 
 
-def run_multi(pdf_paths: list[str | Path], output_folder, log=None, progress=None):
+def run_multi(pdf_paths: list[str | Path], output_folder, log=None, progress=None,
+              review_request_q=None, review_result_q=None):
     paths = [Path(p) for p in (pdf_paths or [])]
     paths = [p for p in paths if p.is_file() and p.suffix.lower() == ".pdf"]
     paths = sorted(paths)
@@ -305,108 +357,25 @@ def run_multi(pdf_paths: list[str | Path], output_folder, log=None, progress=Non
         log=log,
         progress=progress,
         context_label="Processing selected PDFs…",
+        review_request_q=review_request_q,
+        review_result_q=review_result_q,
     )
 
 
-def run_single(pdf_path, output_folder, log=None, progress=None):
+def run_single(pdf_path, output_folder, log=None, progress=None,
+               review_request_q=None, review_result_q=None):
     pdf_path = Path(pdf_path)
     output_folder = Path(output_folder)
-    individual_output_folder = output_folder / INDIVIDUAL_CSV_FOLDER
-
     output_folder.mkdir(parents=True, exist_ok=True)
-    individual_output_folder.mkdir(parents=True, exist_ok=True)
-
-    # Create per-run log + summary files for consistency with batch/multi runs.
-    tee_log, _get_lines, log_path = _tee_logger(output_folder, log=log)
-    started_at = _utc_iso_now()
-
-    output_csv_path = individual_output_folder / f"{pdf_path.stem}_control_points.csv"
-
-    if tee_log:
-        tee_log(f"Processing: {pdf_path.name}")
-        tee_log("  Scanning + extracting control point tables…")
-    if progress:
-        progress({"phase": "start", "current": 1, "total": 1, "pdf": str(pdf_path)})
-    result = run_control_point_pipeline(str(pdf_path), str(output_csv_path), log=tee_log)
-    if tee_log:
-        tee_log(f"  Done. Found {result['valid_count']} valid record(s).")
-        tee_log(f"  Saved per-file CSV: {output_csv_path.name}")
-    if progress:
-        progress({"phase": "done", "current": 1, "total": 1, "pdf": str(pdf_path)})
-
-    # For single-file runs, the "combined" output is just the one file.
-    combined_csv_path = output_folder / "all_control_points.csv"
-    clean_csv_path = output_folder / CLEAN_CSV_NAME
-    review_csv_path = output_folder / REVIEW_CSV_NAME
-    if tee_log:
-        tee_log("Combining results into one CSV…")
-    records, cross_removed = deduplicate_records(
-        result["records"],
-        log=tee_log,
-        context="combined",
+    return _run_pdf_list(
+        [pdf_path],
+        output_folder=output_folder,
+        log=log,
+        progress=progress,
+        context_label=f"Processing: {pdf_path.name}",
+        review_request_q=review_request_q,
+        review_result_q=review_result_q,
     )
-    records = flag_uncertain_duplicates(records, log=tee_log, context="combined")
-    write_csv(records, str(combined_csv_path))
-
-    clean_records, review_records = split_clean_vs_review(records)
-    write_csv(clean_records, str(clean_csv_path))
-    write_csv(review_records, str(review_csv_path))
-    if tee_log:
-        tee_log(
-            "Deduplication complete. "
-            f"Removed {int(result.get('exact_duplicates_removed') or 0) + cross_removed} duplicate point(s)."
-        )
-        tee_log(f"Wrote clean export: {clean_csv_path.name} ({len(clean_records)} row(s))")
-        tee_log(f"Wrote needs review: {review_csv_path.name} ({len(review_records)} row(s))")
-
-    ended_at = _utc_iso_now()
-    summary_path = _write_summary(
-        output_folder,
-        {
-            "pdf_count": 1,
-            "results": [{
-                "pdf": pdf_path.name,
-                "status": "success",
-                "valid_count": result.get("valid_count"),
-                "parsed_count": result.get("parsed_count"),
-                "extraction_pages": result.get("extraction_pages"),
-                "reference_pages": result.get("reference_pages"),
-            }],
-            "combined_csv": str(combined_csv_path),
-            "clean_csv": str(clean_csv_path),
-            "review_csv": str(review_csv_path),
-            "total_records": len(records),
-            "clean_records": len(clean_records),
-            "review_records": len(review_records),
-            "duplicate_points_removed": int(result.get("exact_duplicates_removed") or 0) + cross_removed,
-        },
-        started_at=started_at,
-        ended_at=ended_at,
-    )
-
-    return {
-        "pdf_count": 1,
-        "results": [{
-            "pdf": pdf_path.name,
-            "output_csv": str(output_csv_path),
-            "extraction_pages": result["extraction_pages"],
-            "reference_pages": result["reference_pages"],
-            "parsed_count": result["parsed_count"],
-            "valid_count": result["valid_count"],
-            "status": "success",
-        }],
-        "combined_csv": str(combined_csv_path),
-        "clean_csv": str(clean_csv_path),
-        "review_csv": str(review_csv_path),
-        "log_txt": log_path,
-        "summary_txt": summary_path,
-        "individual_csv_folder": str(individual_output_folder),
-        "total_records": len(records),
-        "clean_records": len(clean_records),
-        "review_records": len(review_records),
-        "duplicate_points_removed": int(result.get("exact_duplicates_removed") or 0) + cross_removed,
-        "found_pdfs": [pdf_path.name],
-    }
 
 
 def _zip_directory(source_dir, zip_path):
@@ -452,49 +421,43 @@ def _write_manifest(output_dir, manifest):
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def run_batch_folder(input_folder, output_folder, log=None, progress=None):
+def run_batch_folder(input_folder, output_folder, log=None, progress=None,
+                     review_request_q=None, review_result_q=None):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
-
-    result = run_batch(input_folder, output_folder, log=log, progress=progress)
-
-    _write_manifest(
-        output_folder,
-        {
-            "mode": "folder",
-            "input_folder": str(Path(input_folder).resolve()),
-            "summary": {
-                "pdf_count": result["pdf_count"],
-                "total_records": result["total_records"],
-                "clean_records": result.get("clean_records"),
-                "review_records": result.get("review_records"),
-                "duplicate_points_removed": result["duplicate_points_removed"],
-            },
-            "files": {
-                "combined_csv": Path(result["combined_csv"]).name,
-                "clean_csv": Path(result["clean_csv"]).name,
-                "needs_review_csv": Path(result["review_csv"]).name,
-                "log_txt": Path(result.get("log_txt") or LOG_TXT_NAME).name,
-                "summary_txt": Path(result.get("summary_txt") or SUMMARY_TXT_NAME).name,
-                "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
-            },
-            "found_pdfs": result["found_pdfs"],
-            "results": result["results"],
+    result = run_batch(input_folder, output_folder, log=log, progress=progress,
+                       review_request_q=review_request_q, review_result_q=review_result_q)
+    _write_manifest(output_folder, {
+        "mode": "folder",
+        "input_folder": str(Path(input_folder).resolve()),
+        "summary": {
+            "pdf_count": result["pdf_count"],
+            "total_records": result["total_records"],
+            "clean_records": result.get("clean_records"),
+            "review_records": result.get("review_records"),
+            "duplicate_points_removed": result["duplicate_points_removed"],
         },
-    )
+        "files": {
+            "combined_csv": Path(result["combined_csv"]).name,
+            "clean_csv": Path(result["clean_csv"]).name,
+            "needs_review_csv": Path(result["review_csv"]).name,
+            "arcgis_csv": ARCGIS_CSV_NAME,
+            "log_txt": Path(result.get("log_txt") or LOG_TXT_NAME).name,
+            "summary_txt": Path(result.get("summary_txt") or SUMMARY_TXT_NAME).name,
+            "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
+        },
+        "found_pdfs": result["found_pdfs"],
+        "results": result["results"],
+    })
+    return {**result, "delivery_path": str(output_folder)}
 
-    return {
-        **result,
-        "delivery_path": str(output_folder),
-    }
 
-
-def run_single_folder(pdf_path, output_folder, log=None, progress=None):
+def run_single_folder(pdf_path, output_folder, log=None, progress=None,
+                      review_request_q=None, review_result_q=None):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
-
-    result = run_single(pdf_path, output_folder, log=log, progress=progress)
-
+    result = run_single(pdf_path, output_folder, log=log, progress=progress,
+                        review_request_q=review_request_q, review_result_q=review_result_q)
     _write_manifest(
         output_folder,
         {
@@ -511,6 +474,7 @@ def run_single_folder(pdf_path, output_folder, log=None, progress=None):
                 "combined_csv": Path(result["combined_csv"]).name,
                 "clean_csv": Path(result["clean_csv"]).name,
                 "needs_review_csv": Path(result["review_csv"]).name,
+                "arcgis_csv": ARCGIS_CSV_NAME,
                 "log_txt": Path(result.get("log_txt") or LOG_TXT_NAME).name,
                 "summary_txt": Path(result.get("summary_txt") or SUMMARY_TXT_NAME).name,
                 "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
@@ -519,19 +483,17 @@ def run_single_folder(pdf_path, output_folder, log=None, progress=None):
             "results": result["results"],
         },
     )
-
-    return {
-        **result,
-        "delivery_path": str(output_folder),
-    }
+    return {**result, "delivery_path": str(output_folder)}
 
 
-def run_batch_packaged(input_folder, package_path, log=None, progress=None):
+def run_batch_packaged(input_folder, package_path, log=None, progress=None,
+                       review_request_q=None, review_result_q=None):
     package_path = Path(package_path)
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
-        result = run_batch(input_folder, tmp_output, log=log, progress=progress)
+        result = run_batch(input_folder, tmp_output, log=log, progress=progress,
+                           review_request_q=review_request_q, review_result_q=review_result_q)
 
         _write_manifest(
             tmp_output,
@@ -549,6 +511,7 @@ def run_batch_packaged(input_folder, package_path, log=None, progress=None):
                     "combined_csv": Path(result["combined_csv"]).name,
                     "clean_csv": Path(result["clean_csv"]).name,
                     "needs_review_csv": Path(result["review_csv"]).name,
+                    "arcgis_csv": ARCGIS_CSV_NAME,
                     "log_txt": Path(result.get("log_txt") or LOG_TXT_NAME).name,
                     "summary_txt": Path(result.get("summary_txt") or SUMMARY_TXT_NAME).name,
                     "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
@@ -567,12 +530,14 @@ def run_batch_packaged(input_folder, package_path, log=None, progress=None):
     }
 
 
-def run_single_packaged(pdf_path, package_path, log=None, progress=None):
+def run_single_packaged(pdf_path, package_path, log=None, progress=None,
+                        review_request_q=None, review_result_q=None):
     package_path = Path(package_path)
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
-        result = run_single(pdf_path, tmp_output, log=log, progress=progress)
+        result = run_single(pdf_path, tmp_output, log=log, progress=progress,
+                            review_request_q=review_request_q, review_result_q=review_result_q)
 
         _write_manifest(
             tmp_output,
@@ -590,6 +555,7 @@ def run_single_packaged(pdf_path, package_path, log=None, progress=None):
                     "combined_csv": Path(result["combined_csv"]).name,
                     "clean_csv": Path(result["clean_csv"]).name,
                     "needs_review_csv": Path(result["review_csv"]).name,
+                    "arcgis_csv": ARCGIS_CSV_NAME,
                     "log_txt": Path(result.get("log_txt") or LOG_TXT_NAME).name,
                     "summary_txt": Path(result.get("summary_txt") or SUMMARY_TXT_NAME).name,
                     "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
@@ -608,7 +574,8 @@ def run_single_packaged(pdf_path, package_path, log=None, progress=None):
     }
 
 
-def run_multi_packaged(pdf_paths: list[str | Path], package_path, log=None, progress=None):
+def run_multi_packaged(pdf_paths: list[str | Path], package_path, log=None, progress=None,
+                       review_request_q=None, review_result_q=None):
     """
     Multi-select equivalent of run_batch_packaged/run_single_packaged.
     Creates a normal output folder in a temp dir and zips it.
@@ -617,7 +584,8 @@ def run_multi_packaged(pdf_paths: list[str | Path], package_path, log=None, prog
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
-        result = run_multi(pdf_paths, tmp_output, log=log, progress=progress)
+        result = run_multi(pdf_paths, tmp_output, log=log, progress=progress,
+                           review_request_q=review_request_q, review_result_q=review_result_q)
 
         _write_manifest(
             tmp_output,
@@ -635,6 +603,7 @@ def run_multi_packaged(pdf_paths: list[str | Path], package_path, log=None, prog
                     "combined_csv": Path(result["combined_csv"]).name,
                     "clean_csv": Path(result["clean_csv"]).name,
                     "needs_review_csv": Path(result["review_csv"]).name,
+                    "arcgis_csv": ARCGIS_CSV_NAME,
                     "log_txt": Path(result.get("log_txt") or LOG_TXT_NAME).name,
                     "summary_txt": Path(result.get("summary_txt") or SUMMARY_TXT_NAME).name,
                     "individual_csv_folder": INDIVIDUAL_CSV_FOLDER + "/",
