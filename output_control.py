@@ -178,3 +178,21 @@ def deduplicate_output_csv(csv_path):
         "unique_count": len(unique_records),
         "duplicates_removed": duplicates_removed,
     }
+
+
+ARCGIS_CSV_FIELDS = ["point_id", "x", "y", "elevation", "description", "source_pdf"]
+
+
+def write_arcgis_csv(records: list[dict], output_path: str) -> None:
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=ARCGIS_CSV_FIELDS)
+        writer.writeheader()
+        for rec in records:
+            writer.writerow({
+                "point_id": rec.get("system_point_id") or rec.get("point") or "",
+                "x": rec.get("easting") or "",
+                "y": rec.get("northing") or "",
+                "elevation": rec.get("elevation") or "",
+                "description": rec.get("description") or "",
+                "source_pdf": rec.get("source_pdf") or "",
+            })
