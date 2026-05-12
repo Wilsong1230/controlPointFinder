@@ -1,9 +1,12 @@
 import threading
+import queue
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 from tkinter import ttk
 import base64
+
+from review_modal import ReviewModal
 
 from batch import (
     run_batch_packaged,
@@ -45,6 +48,10 @@ class ControlPointApp:
         self._preview_flagged_records: list[dict] = []
         self._preview_image_photo = None
         self._progress_total = 0
+
+        self._review_request_q: queue.Queue = queue.Queue()
+        self._review_result_q: queue.Queue = queue.Queue()
+        self._review_polling: bool = False
 
         self.build_ui()
 
@@ -369,6 +376,10 @@ class ControlPointApp:
         self.log("Starting extraction...")
         self._reset_progress()
 
+        self._review_request_q = queue.Queue()
+        self._review_result_q = queue.Queue()
+        self._start_review_polling()
+
         thread = threading.Thread(
             target=self.run_extraction_thread,
             args=(input_value, output_destination)
@@ -544,29 +555,57 @@ class ControlPointApp:
                 text=f"Failed to render page preview: {exc}",
             )
 
+    def _start_review_polling(self):
+        self._review_polling = True
+        self._poll_review_queue()
+
+    def _stop_review_polling(self):
+        self._review_polling = False
+
+    def _poll_review_queue(self):
+        if not self._review_polling:
+            return
+        try:
+            msg = self._review_request_q.get_nowait()
+            self._show_review_modal(msg)
+        except queue.Empty:
+            self.root.after(100, self._poll_review_queue)
+
+    def _show_review_modal(self, msg: dict):
+        modal = ReviewModal(self.root, msg["low_conf"], msg["pdf_path_map"])
+        self.root.wait_window(modal.window)
+        result = modal.get_results()
+        self._review_result_q.put(result)
+        self.root.after(100, self._poll_review_queue)
+
     def run_extraction_thread(self, input_value, output_destination):
         try:
             log = self.log_threadsafe
             progress = lambda payload: self.root.after(0, lambda: self._update_progress_ui(payload))
+            rkw = {
+                "log": log,
+                "progress": progress,
+                "review_request_q": self._review_request_q,
+                "review_result_q": self._review_result_q,
+            }
 
             if self.output_mode.get() == "folder":
                 if self.input_mode.get() == "single":
-                    result = run_single_folder(input_value, output_destination, log=log, progress=progress)
+                    result = run_single_folder(input_value, output_destination, **rkw)
                 elif self.input_mode.get() == "multiple":
-                    result = run_multi(self._selected_pdfs, output_destination, log=log, progress=progress)
+                    result = run_multi(self._selected_pdfs, output_destination, **rkw)
                 else:
-                    result = run_batch_folder(input_value, output_destination, log=log, progress=progress)
+                    result = run_batch_folder(input_value, output_destination, **rkw)
             else:
                 if self.input_mode.get() == "single":
-                    result = run_single_packaged(input_value, output_destination, log=log, progress=progress)
+                    result = run_single_packaged(input_value, output_destination, **rkw)
                 elif self.input_mode.get() == "multiple":
-                    result = run_multi_packaged(self._selected_pdfs, output_destination, log=log, progress=progress)
+                    result = run_multi_packaged(self._selected_pdfs, output_destination, **rkw)
                 else:
-                    result = run_batch_packaged(input_value, output_destination, log=log, progress=progress)
+                    result = run_batch_packaged(input_value, output_destination, **rkw)
 
             log("")
             log("Finishing up…")
-
             log("Extraction complete.")
             log(f"PDFs processed: {result['pdf_count']}")
             log(f"Total records extracted: {result['total_records']}")
@@ -593,7 +632,8 @@ class ControlPointApp:
                 "Extraction complete.\n\n"
                 f"Total records: {result['total_records']}\n"
                 f"Clean export: {result.get('clean_records', '—')}\n"
-                f"Needs review: {result.get('review_records', '—')}"
+                f"Needs review: {result.get('review_records', '—')}\n"
+                "ArcGIS CSV: arcgis_points.csv"
             )
 
         except Exception as error:
@@ -601,6 +641,7 @@ class ControlPointApp:
             messagebox.showerror("Error", str(error))
 
         finally:
+            self.root.after(0, self._stop_review_polling)
             self.run_button.config(state="normal")
 
     def open_output_folder(self):
