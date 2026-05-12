@@ -1,5 +1,12 @@
 from __future__ import annotations
+
+import base64
+from pathlib import Path
 from typing import Any
+import tkinter as tk
+from tkinter import ttk
+
+import fitz
 
 
 def apply_modal_actions(
@@ -33,14 +40,6 @@ def apply_modal_actions(
     return {"accepted": accepted, "skipped": skipped}
 
 
-import base64
-import tkinter as tk
-from tkinter import ttk, scrolledtext
-from pathlib import Path
-
-import fitz
-
-
 class ReviewModal:
     def __init__(
         self,
@@ -62,6 +61,7 @@ class ReviewModal:
         self._zoom: float = 2.0
         self._current_index: int | None = None
         self._photo = None
+        self._edit_frame = None
 
         self._build_ui()
         if self._records:
@@ -208,7 +208,7 @@ class ReviewModal:
         if not sel:
             return
         idx = int(sel[0])
-        if idx != self._current_index:
+        if idx != self._current_index and self._edit_frame is not None:
             self._edit_frame.pack_forget()
         self._current_index = idx
         self._render_pdf_page()
@@ -251,7 +251,9 @@ class ReviewModal:
         edits = {field: var.get().strip() for field, var in self._edit_vars.items() if var.get().strip()}
         if edits:
             self._edits[self._current_index] = edits
-        self._actions[self._current_index] = "edited"
+            self._actions[self._current_index] = "edited"
+        else:
+            self._actions[self._current_index] = "accepted"
         self._edit_frame.pack_forget()
         self._refresh_row(self._current_index)
         self._update_status()
@@ -291,16 +293,21 @@ class ReviewModal:
                                      text=f"PDF not found: {source_pdf}")
             return
 
-        page_num = int(rec.get("source_page") or 1)
+        try:
+            page_num = int(rec.get("source_page") or 1)
+        except (ValueError, TypeError):
+            page_num = 1
         page_index = max(0, page_num - 1)
 
         try:
             doc = fitz.open(pdf_path)
-            page = doc.load_page(page_index)
-            mat = fitz.Matrix(self._zoom, self._zoom)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            png_bytes = pix.tobytes("png")
-            doc.close()
+            try:
+                page = doc.load_page(page_index)
+                mat = fitz.Matrix(self._zoom, self._zoom)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                png_bytes = pix.tobytes("png")
+            finally:
+                doc.close()
 
             b64 = base64.b64encode(png_bytes).decode("ascii")
             photo = tk.PhotoImage(data=b64)
