@@ -8,6 +8,15 @@ import base64
 
 from review_modal import ReviewModal
 
+from batch import (
+    run_batch_packaged,
+    run_single_packaged,
+    run_batch_folder,
+    run_single_folder,
+    run_multi,
+    run_multi_packaged,
+)
+
 import os
 import subprocess
 
@@ -573,14 +582,6 @@ class ControlPointApp:
         self.root.after(100, self._poll_review_queue)
 
     def run_extraction_thread(self, input_value, output_destination):
-        from batch import (
-            run_batch_packaged,
-            run_single_packaged,
-            run_batch_folder,
-            run_single_folder,
-            run_multi,
-            run_multi_packaged,
-        )
         try:
             log = self.log_threadsafe
             progress = lambda payload: self.root.after(0, lambda: self._update_progress_ui(payload))
