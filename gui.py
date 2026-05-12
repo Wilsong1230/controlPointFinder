@@ -8,26 +8,8 @@ import base64
 
 from review_modal import ReviewModal
 
-from batch import (
-    run_batch_packaged,
-    run_single_packaged,
-    run_batch_folder,
-    run_single_folder,
-    run_multi,
-    run_multi_packaged,
-)
-
 import os
 import subprocess
-
-import fitz
-import pdfplumber
-
-from control_point import extract_project_metadata, scanner, extract_control_points
-from confidence import find_best_table
-from data_validation import validate_and_normalize_records
-from datum_standardization import standardize_records
-from output_control import deduplicate_records, flag_uncertain_duplicates
 
 
 class ControlPointApp:
@@ -431,6 +413,11 @@ class ControlPointApp:
         thread.start()
 
     def preview_flagged_rows_thread(self, pdf_path: str):
+        from control_point import extract_project_metadata, scanner, extract_control_points
+        from confidence import find_best_table
+        from data_validation import validate_and_normalize_records
+        from datum_standardization import standardize_records
+        from output_control import deduplicate_records, flag_uncertain_duplicates
         try:
             log = self.log_threadsafe
             log(f"Preview PDF: {Path(pdf_path).name}")
@@ -508,6 +495,9 @@ class ControlPointApp:
         self._render_preview_index(sel[0])
 
     def _render_preview_index(self, index: int):
+        import fitz
+        import pdfplumber
+        from confidence import find_best_table
         if not self._preview_pdf_path or not self._preview_flagged_records:
             return
 
@@ -583,6 +573,14 @@ class ControlPointApp:
         self.root.after(100, self._poll_review_queue)
 
     def run_extraction_thread(self, input_value, output_destination):
+        from batch import (
+            run_batch_packaged,
+            run_single_packaged,
+            run_batch_folder,
+            run_single_folder,
+            run_multi,
+            run_multi_packaged,
+        )
         try:
             log = self.log_threadsafe
             progress = lambda payload: self.root.after(0, lambda: self._update_progress_ui(payload))
