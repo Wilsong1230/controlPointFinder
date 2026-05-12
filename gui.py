@@ -20,7 +20,6 @@ from batch import (
 import os
 import subprocess
 
-
 class ControlPointApp:
     def __init__(self, root):
         self.root = root
@@ -423,7 +422,6 @@ class ControlPointApp:
 
     def preview_flagged_rows_thread(self, pdf_path: str):
         from control_point import extract_project_metadata, scanner, extract_control_points
-        from confidence import find_best_table
         from data_validation import validate_and_normalize_records
         from datum_standardization import standardize_records
         from output_control import deduplicate_records, flag_uncertain_duplicates
