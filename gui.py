@@ -21,6 +21,71 @@ import os
 import subprocess
 from tkinterdnd2 import TkinterDnD, DND_FILES
 
+COLORS = {
+    "bg":              "#fafaf8",
+    "card":            "#ffffff",
+    "border":          "#e7e5e4",
+    "accent":          "#d97706",
+    "accent_light":    "#fef3c7",
+    "accent_dark":     "#92400e",
+    "text":            "#1c1917",
+    "text_sec":        "#78716c",
+    "text_muted":      "#a8a29e",
+    "pill_off_border": "#d4d4d4",
+    "progress_trough": "#e7e5e4",
+    "log_fg":          "#57534e",
+    "dark_surface":    "#44403c",
+    "dark_surface2":   "#57534e",
+    "dark_text":       "#d6d3d1",
+}
+
+
+def _primary_btn(parent, text, command, **kwargs):
+    return tk.Button(
+        parent, text=text, command=command,
+        bg=COLORS["accent"], fg="white",
+        font=("Arial", 11, "bold"),
+        relief="flat", bd=0, padx=16, pady=6,
+        activebackground="#b45309", activeforeground="white",
+        cursor="hand2",
+        **kwargs,
+    )
+
+
+def _secondary_btn(parent, text, command, **kwargs):
+    return tk.Button(
+        parent, text=text, command=command,
+        bg=COLORS["card"], fg=COLORS["text_sec"],
+        font=("Arial", 10),
+        relief="flat", bd=0, padx=10, pady=5,
+        highlightbackground=COLORS["pill_off_border"],
+        highlightthickness=1,
+        activebackground=COLORS["bg"],
+        cursor="hand2",
+        **kwargs,
+    )
+
+
+def _card(parent, **kwargs):
+    return tk.Frame(
+        parent,
+        bg=COLORS["card"],
+        highlightbackground=COLORS["border"],
+        highlightthickness=1,
+        **kwargs,
+    )
+
+
+def _section_label(parent, text):
+    return tk.Label(
+        parent,
+        text=text,
+        font=("Arial", 8, "bold"),
+        bg=COLORS["card"],
+        fg=COLORS["text_sec"],
+    )
+
+
 class ControlPointApp:
     def __init__(self, root):
         self.root = root
@@ -44,7 +109,73 @@ class ControlPointApp:
         self._review_result_q: queue.Queue = queue.Queue()
         self._review_polling: bool = False
 
+        self._pill_btns: dict = {}
+        self._preview_zoom: float = 1.6
+
         self.build_ui()
+
+    def _setup_style(self):
+        self.root.configure(bg=COLORS["bg"])
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.configure("TFrame", background=COLORS["bg"])
+        style.configure("TNotebook", background=COLORS["bg"], borderwidth=0, tabmargins=0)
+        style.configure(
+            "TNotebook.Tab",
+            background=COLORS["bg"],
+            foreground=COLORS["text_muted"],
+            padding=[18, 8],
+            font=("Arial", 10),
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", COLORS["bg"])],
+            foreground=[("selected", COLORS["accent_dark"])],
+            font=[("selected", ("Arial", 10, "bold"))],
+        )
+        style.configure(
+            "TProgressbar",
+            troughcolor=COLORS["progress_trough"],
+            background=COLORS["accent"],
+            borderwidth=0,
+            thickness=7,
+        )
+
+    def _pill_row(self, parent, variable, choices, on_change=None):
+        frame = tk.Frame(parent, bg=COLORS["card"])
+        self._pill_btns[id(variable)] = {}
+
+        def _update_styles():
+            v = variable.get()
+            for val, btn in self._pill_btns[id(variable)].items():
+                active = val == v
+                btn.config(
+                    bg=COLORS["accent_light"] if active else COLORS["card"],
+                    fg=COLORS["accent_dark"] if active else COLORS["text_sec"],
+                    highlightbackground=COLORS["accent"] if active else COLORS["pill_off_border"],
+                    highlightthickness=1,
+                )
+
+        def _select(v):
+            variable.set(v)
+            if on_change:
+                on_change()
+
+        for value, label in choices:
+            btn = tk.Button(
+                frame, text=label,
+                font=("Arial", 9),
+                padx=8, pady=3,
+                relief="flat", bd=0,
+                cursor="hand2",
+                command=lambda v=value: _select(v),
+            )
+            btn.pack(side="left", padx=2)
+            self._pill_btns[id(variable)][value] = btn
+
+        _update_styles()
+        variable.trace_add("write", lambda *_: _update_styles())
+        return frame
 
     def build_ui(self):
         title = tk.Label(self.root, text="Control Point PDF Extractor", font=("Arial", 18, "bold"))
