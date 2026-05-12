@@ -22,7 +22,7 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onedir --windowed --name ControlPointExtractor gui.py --hidden-import=requests --hidden-import=pyproj
+          pyinstaller --onedir --windowed --name ControlPointExtractor gui.py --hidden-import=requests --hidden-import=pyproj --hidden-import=fitz --hidden-import=pdfplumber
 
       - name: Zip output folder
         run: Compress-Archive -Path dist/ControlPointExtractor -DestinationPath dist/ControlPointExtractor.zip -Force
