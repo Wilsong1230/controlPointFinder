@@ -572,9 +572,13 @@ class ControlPointApp:
             self.root.after(100, self._poll_review_queue)
 
     def _show_review_modal(self, msg: dict):
-        modal = ReviewModal(self.root, msg["low_conf"], msg["pdf_path_map"])
-        self.root.wait_window(modal.window)
-        result = modal.get_results()
+        try:
+            modal = ReviewModal(self.root, msg["low_conf"], msg["pdf_path_map"])
+            self.root.wait_window(modal.window)
+            result = modal.get_results()
+        except Exception as exc:
+            self.log_threadsafe(f"Review modal error: {exc}")
+            result = {"accepted": msg["low_conf"], "skipped": []}
         self._review_result_q.put(result)
         self.root.after(100, self._poll_review_queue)
 
