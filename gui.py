@@ -178,169 +178,175 @@ class ControlPointApp:
         return frame
 
     def build_ui(self):
-        title = tk.Label(self.root, text="Control Point PDF Extractor", font=("Arial", 18, "bold"))
-        title.pack(pady=10)
+        self._setup_style()
 
-        main = tk.PanedWindow(self.root, orient=tk.HORIZONTAL, sashrelief=tk.RAISED)
-        main.pack(fill="both", expand=True, padx=10, pady=10)
+        title_bar = tk.Frame(self.root, bg=COLORS["card"],
+                             highlightbackground=COLORS["border"], highlightthickness=1)
+        title_bar.pack(fill="x")
+        tk.Label(title_bar, text="Control Point PDF Extractor",
+                 font=("Arial", 14, "bold"),
+                 bg=COLORS["card"], fg=COLORS["text"],
+                 padx=16, pady=10).pack(side="left")
 
-        left = tk.Frame(main)
-        right = tk.Frame(main)
-        main.add(left, minsize=650)
-        main.add(right, minsize=450)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-        input_frame = tk.Frame(left)
-        input_frame.pack(fill="x", padx=10, pady=5)
+        self.extract_frame = ttk.Frame(self.notebook)
+        self.review_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.extract_frame, text="  Extract  ")
+        self.notebook.add(self.review_frame, text="  Review  ")
 
-        mode_row = tk.Frame(input_frame)
-        mode_row.pack(fill="x")
+        self._build_extract_tab()
+        self._build_review_tab()
 
-        tk.Label(mode_row, text="Input Type:").pack(side="left")
-        tk.Radiobutton(
-            mode_row,
-            text="Folder",
-            variable=self.input_mode,
-            value="folder",
-            command=self.on_mode_change,
-        ).pack(side="left", padx=10)
-        tk.Radiobutton(
-            mode_row,
-            text="Single PDF",
-            variable=self.input_mode,
-            value="single",
-            command=self.on_mode_change,
-        ).pack(side="left")
-        tk.Radiobutton(
-            mode_row,
-            text="Multiple PDFs",
-            variable=self.input_mode,
-            value="multiple",
-            command=self.on_mode_change,
-        ).pack(side="left", padx=10)
+    def _build_extract_tab(self):
+        outer = tk.Frame(self.extract_frame, bg=COLORS["bg"])
+        outer.pack(fill="both", expand=True, padx=12, pady=12)
 
-        self.input_label = tk.Label(input_frame, text="PDF Folder:")
-        self.input_label.pack(anchor="w")
+        # --- Top row: Input card + Output card ---
+        top_row = tk.Frame(outer, bg=COLORS["bg"])
+        top_row.pack(fill="x", pady=(0, 10))
+        top_row.columnconfigure(0, weight=1)
+        top_row.columnconfigure(1, weight=1)
 
-        input_row = tk.Frame(input_frame)
-        input_row.pack(fill="x")
+        # Input card
+        input_card = _card(top_row)
+        input_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        _section_label(input_card, "INPUT").pack(anchor="w", padx=12, pady=(8, 4))
 
-        tk.Entry(input_row, textvariable=self.input_path).pack(
-            side="left",
-            fill="x",
-            expand=True
+        self._drop_zone = tk.Frame(
+            input_card,
+            bg=COLORS["accent_light"],
+            highlightbackground=COLORS["accent"],
+            highlightthickness=2,
+            pady=8,
         )
+        self._drop_zone.pack(fill="x", padx=12, pady=(0, 8))
+        tk.Label(self._drop_zone, text="📂  Drop folder or PDF(s) here",
+                 font=("Arial", 10, "bold"),
+                 bg=COLORS["accent_light"], fg=COLORS["accent_dark"]).pack()
+        tk.Label(self._drop_zone, text="or use Browse below",
+                 font=("Arial", 9),
+                 bg=COLORS["accent_light"], fg=COLORS["text_muted"]).pack()
 
-        tk.Button(
-            input_row,
-            text="Browse",
-            command=self.select_input
-        ).pack(side="left", padx=5)
+        self._pill_row(
+            input_card, self.input_mode,
+            [("folder", "Folder"), ("single", "Single PDF"), ("multiple", "Multiple PDFs")],
+            on_change=self.on_mode_change,
+        ).pack(anchor="w", padx=12, pady=(0, 6))
 
-        output_frame = tk.Frame(left)
-        output_frame.pack(fill="x", padx=10, pady=5)
+        self.input_label = tk.Label(input_card, text="PDF Folder:",
+                                    font=("Arial", 10), bg=COLORS["card"], fg=COLORS["text"])
+        self.input_label.pack(anchor="w", padx=12)
 
-        output_mode_row = tk.Frame(output_frame)
-        output_mode_row.pack(fill="x")
+        input_row = tk.Frame(input_card, bg=COLORS["card"])
+        input_row.pack(fill="x", padx=12, pady=(2, 10))
+        tk.Entry(input_row, textvariable=self.input_path,
+                 bg=COLORS["bg"], fg=COLORS["text_sec"],
+                 relief="flat", bd=0,
+                 highlightbackground=COLORS["border"],
+                 highlightthickness=1).pack(
+            side="left", fill="x", expand=True, ipady=5, padx=(0, 6))
+        _secondary_btn(input_row, "Browse", self.select_input).pack(side="left")
 
-        tk.Label(output_mode_row, text="Output Type:").pack(side="left")
-        tk.Radiobutton(
-            output_mode_row,
-            text="ZIP",
-            variable=self.output_mode,
-            value="zip",
-            command=self.on_output_mode_change,
-        ).pack(side="left", padx=10)
-        tk.Radiobutton(
-            output_mode_row,
-            text="Folder",
-            variable=self.output_mode,
-            value="folder",
-            command=self.on_output_mode_change,
-        ).pack(side="left")
+        # Output card
+        output_card = _card(top_row)
+        output_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        _section_label(output_card, "OUTPUT").pack(anchor="w", padx=12, pady=(8, 4))
 
-        self.output_label = tk.Label(output_frame, text="Output Package (.zip):")
-        self.output_label.pack(anchor="w")
+        self._pill_row(
+            output_card, self.output_mode,
+            [("zip", "ZIP"), ("folder", "Folder")],
+            on_change=self.on_output_mode_change,
+        ).pack(anchor="w", padx=12, pady=(0, 6))
 
-        output_row = tk.Frame(output_frame)
-        output_row.pack(fill="x")
+        self.output_label = tk.Label(output_card, text="Output Package (.zip):",
+                                     font=("Arial", 10), bg=COLORS["card"], fg=COLORS["text"])
+        self.output_label.pack(anchor="w", padx=12)
 
-        tk.Entry(output_row, textvariable=self.output_package).pack(
-            side="left",
-            fill="x",
-            expand=True
-        )
+        output_row = tk.Frame(output_card, bg=COLORS["card"])
+        output_row.pack(fill="x", padx=12, pady=(2, 10))
+        tk.Entry(output_row, textvariable=self.output_package,
+                 bg=COLORS["bg"], fg=COLORS["text_sec"],
+                 relief="flat", bd=0,
+                 highlightbackground=COLORS["border"],
+                 highlightthickness=1).pack(
+            side="left", fill="x", expand=True, ipady=5, padx=(0, 6))
+        _secondary_btn(output_row, "Browse", self.select_output_destination).pack(side="left")
 
-        tk.Button(
-            output_row,
-            text="Browse",
-            command=self.select_output_destination
-        ).pack(side="left", padx=5)
+        # --- Action row ---
+        action_row = tk.Frame(outer, bg=COLORS["bg"])
+        action_row.pack(fill="x", pady=(0, 10))
 
-        action_row = tk.Frame(left)
-        action_row.pack(fill="x", padx=10, pady=10)
-
-        self.run_button = tk.Button(action_row, text="Run Extraction", command=self.run_extraction, height=2)
+        self.run_button = _primary_btn(action_row, "▶  Run Extraction", self.run_extraction)
         self.run_button.pack(side="left")
 
-        self.open_output_button = tk.Button(
-            action_row,
-            text="Open Output Folder",
-            command=self.open_output_folder,
-            height=2,
-            state="disabled",
-        )
-        self.open_output_button.pack(side="left", padx=10)
+        self.open_output_button = _secondary_btn(
+            action_row, "Open Output Folder", self.open_output_folder, state="disabled")
+        self.open_output_button.pack(side="left", padx=(8, 0))
 
-        self.preview_button = tk.Button(
-            action_row,
-            text="Preview Flagged Rows",
-            command=self.preview_flagged_rows,
-            height=2,
-        )
-        self.preview_button.pack(side="left", padx=10)
+        # --- Progress card ---
+        prog_card = _card(outer)
+        prog_card.pack(fill="x", pady=(0, 10))
 
-        # --- Progress ---
-        progress_frame = tk.Frame(left)
-        progress_frame.pack(fill="x", padx=10, pady=(0, 6))
+        prog_header = tk.Frame(prog_card, bg=COLORS["card"])
+        prog_header.pack(fill="x", padx=12, pady=(8, 4))
+        tk.Label(prog_header, text="Progress", font=("Arial", 10, "bold"),
+                 bg=COLORS["card"], fg=COLORS["text"]).pack(side="left")
+        self.progress_label = tk.Label(prog_header, text="0 / 0 PDFs",
+                                       font=("Arial", 10),
+                                       bg=COLORS["card"], fg=COLORS["text_sec"])
+        self.progress_label.pack(side="right")
 
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_bar = ttk.Progressbar(
-            progress_frame,
-            variable=self.progress_var,
-            maximum=100.0,
-            mode="determinate",
+            prog_card, variable=self.progress_var, maximum=100.0, mode="determinate")
+        self.progress_bar.pack(fill="x", padx=12, pady=(0, 4))
+
+        self.current_file_label = tk.Label(
+            prog_card, text="Current PDF: —",
+            font=("Arial", 9), bg=COLORS["card"], fg=COLORS["text_muted"])
+        self.current_file_label.pack(anchor="w", padx=12, pady=(0, 8))
+
+        # --- Log card ---
+        log_card = _card(outer)
+        log_card.pack(fill="both", expand=True)
+        _section_label(log_card, "LOG").pack(anchor="w", padx=12, pady=(8, 4))
+        self.log_box = scrolledtext.ScrolledText(
+            log_card, height=12,
+            bg=COLORS["bg"], fg=COLORS["log_fg"],
+            font=("Courier", 10),
+            relief="flat", bd=0,
+            insertbackground=COLORS["text"],
         )
-        self.progress_bar.pack(fill="x")
+        self.log_box.pack(fill="both", expand=True, padx=12, pady=(0, 8))
 
-        self.progress_label = tk.Label(progress_frame, text="Progress: 0/0")
-        self.progress_label.pack(anchor="w", pady=(4, 0))
+    def _build_review_tab(self):
+        outer = tk.Frame(self.review_frame, bg=COLORS["bg"])
+        outer.pack(fill="both", expand=True, padx=12, pady=12)
 
-        self.current_file_label = tk.Label(progress_frame, text="Current PDF: —")
-        self.current_file_label.pack(anchor="w")
+        btn_row = tk.Frame(outer, bg=COLORS["bg"])
+        btn_row.pack(fill="x", pady=(0, 10))
+        self.preview_button = _primary_btn(
+            btn_row, "Preview Flagged Rows…", self.preview_flagged_rows)
+        self.preview_button.pack(side="left")
 
-        self.log_box = scrolledtext.ScrolledText(left, height=18)
-        self.log_box.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # --- Preview panel (right side) ---
-        preview_title = tk.Label(right, text="Preview (flagged rows)", font=("Arial", 12, "bold"))
-        preview_title.pack(anchor="w", padx=10, pady=(0, 6))
-
-        self.preview_listbox = tk.Listbox(right, height=7)
-        self.preview_listbox.pack(fill="x", padx=10, pady=(0, 8))
+        self.preview_listbox = tk.Listbox(outer, height=5)
+        self.preview_listbox.pack(fill="x", pady=(0, 8))
         self.preview_listbox.bind("<<ListboxSelect>>", self._on_preview_select)
 
-        self.preview_panes = tk.PanedWindow(right, orient=tk.VERTICAL, sashrelief=tk.RAISED)
-        self.preview_panes.pack(fill="both", expand=True, padx=10, pady=10)
+        panels = tk.Frame(outer, bg=COLORS["bg"])
+        panels.pack(fill="both", expand=True)
+        panels.columnconfigure(0, weight=1)
+        panels.columnconfigure(1, weight=1)
 
-        table_frame = tk.LabelFrame(self.preview_panes, text="Extracted Table (best guess)")
-        page_frame = tk.LabelFrame(self.preview_panes, text="PDF Page Preview")
-
-        self.preview_panes.add(table_frame, minsize=220)
-        self.preview_panes.add(page_frame, minsize=220)
-
+        table_frame = tk.LabelFrame(panels, text="Extracted Table")
+        table_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         self.preview_table_text = scrolledtext.ScrolledText(table_frame, height=14)
         self.preview_table_text.pack(fill="both", expand=True)
 
+        page_frame = tk.LabelFrame(panels, text="PDF Page Preview")
+        page_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         self.preview_page_canvas = tk.Canvas(page_frame, bg="black")
         self.preview_page_canvas.pack(fill="both", expand=True)
 
@@ -447,7 +453,7 @@ class ControlPointApp:
     def _reset_progress(self):
         self._progress_total = 0
         self.progress_var.set(0.0)
-        self.progress_label.config(text="Progress: 0/0")
+        self.progress_label.config(text="0 / 0 PDFs")
         self.current_file_label.config(text="Current PDF: —")
         self._last_delivery_path = None
         self.open_output_button.config(state="disabled")
@@ -469,7 +475,7 @@ class ControlPointApp:
             pct = max(0.0, min(100.0, (done / total) * 100.0))
 
         self.progress_var.set(pct)
-        self.progress_label.config(text=f"Progress: {done}/{total}")
+        self.progress_label.config(text=f"{done} / {total} PDFs")
 
     def run_extraction(self):
         input_value = self.input_path.get()
