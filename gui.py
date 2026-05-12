@@ -335,30 +335,116 @@ class ControlPointApp:
         outer = tk.Frame(self.review_frame, bg=COLORS["bg"])
         outer.pack(fill="both", expand=True, padx=12, pady=12)
 
+        # Trigger button
         btn_row = tk.Frame(outer, bg=COLORS["bg"])
         btn_row.pack(fill="x", pady=(0, 10))
         self.preview_button = _primary_btn(
             btn_row, "Preview Flagged Rows…", self.preview_flagged_rows)
         self.preview_button.pack(side="left")
 
-        self.preview_listbox = tk.Listbox(outer, height=5)
-        self.preview_listbox.pack(fill="x", pady=(0, 8))
+        # Flagged records card
+        records_card = _card(outer)
+        records_card.pack(fill="x", pady=(0, 10))
+        self._records_header = _section_label(records_card, "FLAGGED RECORDS")
+        self._records_header.pack(anchor="w", padx=12, pady=(8, 6))
+
+        listbox_frame = tk.Frame(records_card, bg=COLORS["card"])
+        listbox_frame.pack(fill="x", padx=12, pady=(0, 8))
+        self.preview_listbox = tk.Listbox(
+            listbox_frame,
+            height=5,
+            bg=COLORS["card"],
+            fg=COLORS["text"],
+            selectbackground=COLORS["accent_light"],
+            selectforeground=COLORS["accent_dark"],
+            font=("Arial", 10),
+            relief="flat", bd=0,
+            activestyle="none",
+            highlightthickness=0,
+        )
+        lb_scroll = ttk.Scrollbar(listbox_frame, orient="vertical",
+                                   command=self.preview_listbox.yview)
+        self.preview_listbox.configure(yscrollcommand=lb_scroll.set)
+        self.preview_listbox.pack(side="left", fill="both", expand=True)
+        lb_scroll.pack(side="right", fill="y")
         self.preview_listbox.bind("<<ListboxSelect>>", self._on_preview_select)
 
+        # Side-by-side panels
         panels = tk.Frame(outer, bg=COLORS["bg"])
         panels.pack(fill="both", expand=True)
         panels.columnconfigure(0, weight=1)
         panels.columnconfigure(1, weight=1)
+        panels.rowconfigure(0, weight=1)
 
-        table_frame = tk.LabelFrame(panels, text="Extracted Table")
-        table_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        self.preview_table_text = scrolledtext.ScrolledText(table_frame, height=14)
-        self.preview_table_text.pack(fill="both", expand=True)
+        # Left: Extracted table card
+        table_card = _card(panels)
+        table_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        table_card.rowconfigure(1, weight=1)
+        table_card.columnconfigure(0, weight=1)
+        _section_label(table_card, "EXTRACTED TABLE").grid(
+            row=0, column=0, sticky="w", padx=12, pady=(8, 4))
+        self.preview_table_text = scrolledtext.ScrolledText(
+            table_card,
+            height=14,
+            bg=COLORS["bg"], fg=COLORS["log_fg"],
+            font=("Courier", 9),
+            relief="flat", bd=0,
+            highlightthickness=0,
+        )
+        self.preview_table_text.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
 
-        page_frame = tk.LabelFrame(panels, text="PDF Page Preview")
-        page_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        self.preview_page_canvas = tk.Canvas(page_frame, bg="black")
-        self.preview_page_canvas.pack(fill="both", expand=True)
+        # Right: PDF page card (dark)
+        page_card = tk.Frame(
+            panels,
+            bg=COLORS["dark_surface"],
+            highlightbackground=COLORS["border"],
+            highlightthickness=1,
+        )
+        page_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        page_card.rowconfigure(1, weight=1)
+        page_card.columnconfigure(0, weight=1)
+        tk.Label(page_card, text="PDF PAGE",
+                 font=("Arial", 8, "bold"),
+                 bg=COLORS["dark_surface"], fg=COLORS["dark_text"]).grid(
+            row=0, column=0, sticky="w", padx=12, pady=(8, 4))
+        self.preview_page_canvas = tk.Canvas(
+            page_card,
+            bg=COLORS["dark_surface"],
+            highlightthickness=0,
+        )
+        self.preview_page_canvas.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 4))
+
+        # Zoom controls
+        zoom_row = tk.Frame(page_card, bg=COLORS["dark_surface"])
+        zoom_row.grid(row=2, column=0, pady=(0, 8))
+        tk.Button(zoom_row, text="–", width=3,
+                  bg=COLORS["dark_surface2"], fg=COLORS["dark_text"],
+                  relief="flat", bd=0, cursor="hand2",
+                  activebackground=COLORS["dark_surface"],
+                  command=self._preview_zoom_out).pack(side="left", padx=4)
+        self._preview_zoom_label = tk.Label(
+            zoom_row, text="160%", width=5,
+            bg=COLORS["dark_surface"], fg=COLORS["dark_text"])
+        self._preview_zoom_label.pack(side="left")
+        tk.Button(zoom_row, text="+", width=3,
+                  bg=COLORS["dark_surface2"], fg=COLORS["dark_text"],
+                  relief="flat", bd=0, cursor="hand2",
+                  activebackground=COLORS["dark_surface"],
+                  command=self._preview_zoom_in).pack(side="left", padx=4)
+
+    def _preview_zoom_in(self):
+        self._preview_zoom = min(self._preview_zoom + 0.2, 4.0)
+        self._preview_zoom_label.config(text=f"{int(self._preview_zoom * 100)}%")
+        sel = self.preview_listbox.curselection()
+        if sel:
+            self._render_preview_index(sel[0])
+
+    def _preview_zoom_out(self):
+        self._preview_zoom = max(self._preview_zoom - 0.2, 0.5)
+        self._preview_zoom_label.config(text=f"{int(self._preview_zoom * 100)}%")
+        sel = self.preview_listbox.curselection()
+        if sel:
+            self._render_preview_index(sel[0])
 
     def _on_drag_enter(self, event):
         self._drop_zone.configure(bg="#fef9e6", highlightbackground="#b45309")
@@ -655,6 +741,8 @@ class ControlPointApp:
 
     def _populate_preview_panel(self, pdf_path: str, flagged_records: list[dict]):
         self._preview_pdf_path = pdf_path
+        self._records_header.config(
+            text=f"FLAGGED RECORDS — {Path(pdf_path).name}")
         self._preview_flagged_records = list(flagged_records or [])
 
         self.preview_listbox.delete(0, tk.END)
@@ -720,7 +808,7 @@ class ControlPointApp:
         try:
             doc = fitz.open(self._preview_pdf_path)
             page = doc.load_page(page_index)
-            pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
+            pix = page.get_pixmap(matrix=fitz.Matrix(self._preview_zoom, self._preview_zoom), alpha=False)
             png_bytes = pix.tobytes("png")
             doc.close()
 
