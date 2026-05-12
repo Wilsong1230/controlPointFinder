@@ -263,7 +263,7 @@ def _run_pdf_list(
             tee_log(f"  Found {len(low_conf)} low-confidence record(s) — sending to review modal…")
         pdf_path_map = {p.name: str(p) for p in pdf_paths}
         review_request_q.put({"low_conf": low_conf, "pdf_path_map": pdf_path_map})
-        modal_result = review_result_q.get()
+        modal_result = review_result_q.get(timeout=600)
         accepted_from_modal = modal_result["accepted"]
         skipped_from_modal = modal_result["skipped"]
         for rec in skipped_from_modal:
