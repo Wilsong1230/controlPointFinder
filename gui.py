@@ -229,6 +229,16 @@ class ControlPointApp:
                  font=("Arial", 9),
                  bg=COLORS["accent_light"], fg=COLORS["text_muted"]).pack()
 
+        self._drop_zone.drop_target_register(DND_FILES)
+        self._drop_zone.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+        self._drop_zone.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+        self._drop_zone.dnd_bind("<<Drop>>", self._on_drop)
+        for child in self._drop_zone.winfo_children():
+            child.drop_target_register(DND_FILES)
+            child.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+            child.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+            child.dnd_bind("<<Drop>>", self._on_drop)
+
         self._pill_row(
             input_card, self.input_mode,
             [("folder", "Folder"), ("single", "Single PDF"), ("multiple", "Multiple PDFs")],
@@ -349,6 +359,44 @@ class ControlPointApp:
         page_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         self.preview_page_canvas = tk.Canvas(page_frame, bg="black")
         self.preview_page_canvas.pack(fill="both", expand=True)
+
+    def _on_drag_enter(self, event):
+        self._drop_zone.configure(bg="#fef9e6", highlightbackground="#b45309")
+        for child in self._drop_zone.winfo_children():
+            child.configure(bg="#fef9e6")
+
+    def _on_drag_leave(self, event):
+        self._drop_zone.configure(
+            bg=COLORS["accent_light"], highlightbackground=COLORS["accent"])
+        for child in self._drop_zone.winfo_children():
+            child.configure(bg=COLORS["accent_light"])
+
+    def _on_drop(self, event):
+        self._on_drag_leave(event)
+        paths = self.root.tk.splitlist(event.data)
+        paths = [p for p in paths if p]
+        if not paths:
+            return
+
+        if len(paths) == 1 and os.path.isdir(paths[0]):
+            self.input_mode.set("folder")
+            self._selected_pdfs = []
+            self.input_path.set(paths[0])
+            self.input_label.config(text="PDF Folder:")
+            self.output_package.set(self._default_output_destination(paths[0], "folder"))
+        elif len(paths) == 1:
+            self.input_mode.set("single")
+            self._selected_pdfs = []
+            self.input_path.set(paths[0])
+            self.input_label.config(text="PDF File:")
+            self.output_package.set(self._default_output_destination(paths[0], "single"))
+        else:
+            self.input_mode.set("multiple")
+            self._selected_pdfs = list(paths)
+            self.input_path.set(f"{len(paths)} PDF(s) selected")
+            self.input_label.config(text="PDF Files:")
+            base = str(Path(paths[0]).parent)
+            self.output_package.set(self._default_output_destination(base, "folder"))
 
     def select_input(self):
         mode = self.input_mode.get()
