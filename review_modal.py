@@ -6,8 +6,6 @@ from typing import Any
 import tkinter as tk
 from tkinter import ttk
 
-import fitz
-
 
 def apply_modal_actions(
     records: list[dict[str, Any]],
@@ -282,6 +280,7 @@ class ReviewModal:
         self.window.destroy()
 
     def _render_pdf_page(self):
+        import fitz  # deferred: only needed when rendering PDF pages
         if self._current_index is None:
             return
         rec = self._records[self._current_index]
