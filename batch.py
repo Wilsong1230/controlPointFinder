@@ -1,8 +1,10 @@
 from pathlib import Path
 from datetime import datetime, timezone
 import json
+import os as _os
 import tempfile
 import zipfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from control_point import run_control_point_pipeline, write_csv
 from output_control import deduplicate_records, flag_uncertain_duplicates, write_arcgis_csv
@@ -168,10 +170,11 @@ def _run_pdf_list(
     context_label: str = "",
     review_request_q=None,
     review_result_q=None,
+    workers: int | None = None,
 ):
-    """
-    Shared runner for folder mode and multi-select mode.
-    """
+    if workers is None:
+        workers = min(8, _os.cpu_count() or 1)
+
     output_folder = Path(output_folder)
     individual_output_folder = output_folder / INDIVIDUAL_CSV_FOLDER
 
@@ -184,62 +187,63 @@ def _run_pdf_list(
     if tee_log:
         if context_label:
             tee_log(context_label)
-        tee_log(f"Found {len(pdf_paths)} PDF(s).")
+        tee_log(f"Found {len(pdf_paths)} PDF(s). Processing with {workers} worker(s).")
 
     results = []
     all_valid_records = []
     exact_duplicates_removed_total = 0
-
     total = len(pdf_paths)
-    for index, pdf_path in enumerate(pdf_paths, start=1):
-        if progress:
-            progress({"phase": "start", "current": index, "total": total, "pdf": str(pdf_path)})
-        if tee_log:
-            tee_log("")
-            tee_log(f"[{index}/{total}] Processing: {pdf_path.name}")
-            tee_log("  Scanning + extracting control point tables…")
 
-        output_csv_path = individual_output_folder / f"{pdf_path.stem}_control_points.csv"
+    # Build args upfront: (pdf_path_str, output_csv_path_str)
+    pdf_list = list(pdf_paths)
+    args_by_index = {
+        i: (str(p), str(individual_output_folder / f"{p.stem}_control_points.csv"))
+        for i, p in enumerate(pdf_list, start=1)
+    }
 
-        # rest of your loop...
-        try:
-            result = run_control_point_pipeline(
-                str(pdf_path),
-                str(output_csv_path),
-                log=tee_log
-            )
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        future_to_index = {
+            pool.submit(_process_single_pdf, args_by_index[i]): i
+            for i in range(1, total + 1)
+        }
 
-            all_valid_records.extend(result["records"])
-            exact_duplicates_removed_total += int(result.get("exact_duplicates_removed") or 0)
-            if tee_log:
-                tee_log(f"  Done. Found {result['valid_count']} valid record(s).")
-                tee_log(f"  Saved per-file CSV: {output_csv_path.name}")
+        for future in as_completed(future_to_index):
+            i = future_to_index[future]
+            pdf_path = pdf_list[i - 1]
+            output_csv_path = args_by_index[i][1]
+            worker_result = future.result()
 
-            results.append({
-                "pdf": str(pdf_path),
-                "output_csv": str(output_csv_path),
-                "extraction_pages": result["extraction_pages"],
-                "reference_pages": result["reference_pages"],
-                "parsed_count": result["parsed_count"],
-                "valid_count": result["valid_count"],
-                "status": "success",
-            })
+            if worker_result["ok"]:
+                result = worker_result["result"]
+                all_valid_records.extend(result["records"])
+                exact_duplicates_removed_total += int(result.get("exact_duplicates_removed") or 0)
+                if tee_log:
+                    tee_log(f"[{i}/{total}] Done: {pdf_path.name} — {result['valid_count']} record(s)")
+                results.append({
+                    "pdf": str(pdf_path),
+                    "output_csv": output_csv_path,
+                    "extraction_pages": result["extraction_pages"],
+                    "reference_pages": result["reference_pages"],
+                    "parsed_count": result["parsed_count"],
+                    "valid_count": result["valid_count"],
+                    "status": "success",
+                })
+            else:
+                error = worker_result["error"]
+                if tee_log:
+                    tee_log(f"[{i}/{total}] Failed: {pdf_path.name} — {error}")
+                results.append({
+                    "pdf": pdf_path.name,
+                    "output_csv": "",
+                    "extraction_pages": [],
+                    "reference_pages": [],
+                    "parsed_count": 0,
+                    "valid_count": 0,
+                    "status": f"failed: {error}",
+                })
 
-        except Exception as error:
-            if tee_log:
-                tee_log(f"  Failed: {error}")
-            results.append({
-                "pdf": pdf_path.name,
-                "output_csv": "",
-                "extraction_pages": [],
-                "reference_pages": [],
-                "parsed_count": 0,
-                "valid_count": 0,
-                "status": f"failed: {error}",
-            })
-        finally:
             if progress:
-                progress({"phase": "done", "current": index, "total": total, "pdf": str(pdf_path)})
+                progress({"phase": "done", "current": i, "total": total, "pdf": str(pdf_path)})
 
     combined_csv_path = output_folder / "all_control_points.csv"
     clean_csv_path = output_folder / CLEAN_CSV_NAME
@@ -340,7 +344,7 @@ def _process_single_pdf(args: tuple) -> dict:
 
 
 def run_batch(input_folder, output_folder, log=None, progress=None,
-              review_request_q=None, review_result_q=None):
+              review_request_q=None, review_result_q=None, workers=None):
     input_folder = Path(input_folder)
     pdf_paths = sorted(
         path for path in input_folder.rglob("*")
@@ -354,11 +358,12 @@ def run_batch(input_folder, output_folder, log=None, progress=None,
         context_label=f"Searching for PDFs in: {input_folder}",
         review_request_q=review_request_q,
         review_result_q=review_result_q,
+        workers=workers,
     )
 
 
 def run_multi(pdf_paths: list[str | Path], output_folder, log=None, progress=None,
-              review_request_q=None, review_result_q=None):
+              review_request_q=None, review_result_q=None, workers=None):
     paths = [Path(p) for p in (pdf_paths or [])]
     paths = [p for p in paths if p.is_file() and p.suffix.lower() == ".pdf"]
     paths = sorted(paths)
@@ -370,11 +375,12 @@ def run_multi(pdf_paths: list[str | Path], output_folder, log=None, progress=Non
         context_label="Processing selected PDFs…",
         review_request_q=review_request_q,
         review_result_q=review_result_q,
+        workers=workers,
     )
 
 
 def run_single(pdf_path, output_folder, log=None, progress=None,
-               review_request_q=None, review_result_q=None):
+               review_request_q=None, review_result_q=None, workers=None):
     pdf_path = Path(pdf_path)
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -386,6 +392,7 @@ def run_single(pdf_path, output_folder, log=None, progress=None,
         context_label=f"Processing: {pdf_path.name}",
         review_request_q=review_request_q,
         review_result_q=review_result_q,
+        workers=workers,
     )
 
 
@@ -433,11 +440,12 @@ def _write_manifest(output_dir, manifest):
 
 
 def run_batch_folder(input_folder, output_folder, log=None, progress=None,
-                     review_request_q=None, review_result_q=None):
+                     review_request_q=None, review_result_q=None, workers=None):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
     result = run_batch(input_folder, output_folder, log=log, progress=progress,
-                       review_request_q=review_request_q, review_result_q=review_result_q)
+                       review_request_q=review_request_q, review_result_q=review_result_q,
+                       workers=workers)
     _write_manifest(output_folder, {
         "mode": "folder",
         "input_folder": str(Path(input_folder).resolve()),
@@ -464,11 +472,12 @@ def run_batch_folder(input_folder, output_folder, log=None, progress=None,
 
 
 def run_single_folder(pdf_path, output_folder, log=None, progress=None,
-                      review_request_q=None, review_result_q=None):
+                      review_request_q=None, review_result_q=None, workers=None):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
     result = run_single(pdf_path, output_folder, log=log, progress=progress,
-                        review_request_q=review_request_q, review_result_q=review_result_q)
+                        review_request_q=review_request_q, review_result_q=review_result_q,
+                        workers=workers)
     _write_manifest(
         output_folder,
         {
@@ -498,13 +507,14 @@ def run_single_folder(pdf_path, output_folder, log=None, progress=None,
 
 
 def run_batch_packaged(input_folder, package_path, log=None, progress=None,
-                       review_request_q=None, review_result_q=None):
+                       review_request_q=None, review_result_q=None, workers=None):
     package_path = Path(package_path)
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
         result = run_batch(input_folder, tmp_output, log=log, progress=progress,
-                           review_request_q=review_request_q, review_result_q=review_result_q)
+                           review_request_q=review_request_q, review_result_q=review_result_q,
+                           workers=workers)
 
         _write_manifest(
             tmp_output,
@@ -542,13 +552,14 @@ def run_batch_packaged(input_folder, package_path, log=None, progress=None,
 
 
 def run_single_packaged(pdf_path, package_path, log=None, progress=None,
-                        review_request_q=None, review_result_q=None):
+                        review_request_q=None, review_result_q=None, workers=None):
     package_path = Path(package_path)
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
         result = run_single(pdf_path, tmp_output, log=log, progress=progress,
-                            review_request_q=review_request_q, review_result_q=review_result_q)
+                            review_request_q=review_request_q, review_result_q=review_result_q,
+                            workers=workers)
 
         _write_manifest(
             tmp_output,
@@ -586,7 +597,7 @@ def run_single_packaged(pdf_path, package_path, log=None, progress=None,
 
 
 def run_multi_packaged(pdf_paths: list[str | Path], package_path, log=None, progress=None,
-                       review_request_q=None, review_result_q=None):
+                       review_request_q=None, review_result_q=None, workers=None):
     """
     Multi-select equivalent of run_batch_packaged/run_single_packaged.
     Creates a normal output folder in a temp dir and zips it.
@@ -596,7 +607,8 @@ def run_multi_packaged(pdf_paths: list[str | Path], package_path, log=None, prog
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
         result = run_multi(pdf_paths, tmp_output, log=log, progress=progress,
-                           review_request_q=review_request_q, review_result_q=review_result_q)
+                           review_request_q=review_request_q, review_result_q=review_result_q,
+                           workers=workers)
 
         _write_manifest(
             tmp_output,

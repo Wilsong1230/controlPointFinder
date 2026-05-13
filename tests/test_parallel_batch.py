@@ -43,3 +43,24 @@ def test_process_single_pdf_is_module_level():
     fn = batch._process_single_pdf
     # If this doesn't raise, the function is picklable
     pickle.dumps(fn)
+
+
+def test_run_batch_accepts_workers_param():
+    import inspect
+    from batch import run_batch
+    sig = inspect.signature(run_batch)
+    assert "workers" in sig.parameters
+
+
+def test_run_multi_accepts_workers_param():
+    import inspect
+    from batch import run_multi
+    sig = inspect.signature(run_multi)
+    assert "workers" in sig.parameters
+
+
+def test_run_single_accepts_workers_param():
+    import inspect
+    from batch import run_single
+    sig = inspect.signature(run_single)
+    assert "workers" in sig.parameters
