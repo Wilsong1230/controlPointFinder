@@ -166,6 +166,32 @@ class ReviewModal:
 
         self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
 
+    def _reload_table(self):
+        for iid in self._tree.get_children():
+            self._tree.delete(iid)
+        action_labels = {"accepted": "✓ Accept", "skipped": "✗ Skip", "edited": "✎ Edited"}
+        for i, rec in enumerate(self._records):
+            action = self._actions.get(i, "")
+            label = action_labels.get(action, "")
+            self._tree.insert("", "end", iid=str(i), values=(
+                i + 1,
+                rec.get("system_point_id") or rec.get("point") or "",
+                rec.get("easting") or "",
+                rec.get("northing") or "",
+                rec.get("elevation") or "",
+                (rec.get("description") or "")[:60],
+                rec.get("confidence_score") or "",
+                rec.get("source_page") or "",
+                rec.get("source_pdf") or "",
+                label,
+            ))
+            if action == "skipped":
+                self._tree.item(str(i), tags=("skipped",))
+                self._tree.tag_configure("skipped", foreground="gray")
+            elif action in ("accepted", "edited"):
+                self._tree.item(str(i), tags=("accepted",))
+                self._tree.tag_configure("accepted", foreground="#2e7d32")
+
     def _build_pdf_viewer(self, parent):
         zoom_bar = tk.Frame(parent)
         zoom_bar.pack(fill="x", padx=4, pady=(4, 0))
