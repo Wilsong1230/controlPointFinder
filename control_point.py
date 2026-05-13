@@ -13,71 +13,7 @@ PDF_PATH = "sample.pdf"
 
 
 def extract_project_metadata(pdf_path):
-    import fitz
-    metadata = {
-        "horizontal_datum": "",
-        "vertical_datum": "",
-        "coordinate_system": "",
-        "metadata_pages": [],
-        "evidence": [],
-    }
-
-    doc = fitz.open(pdf_path)
-
-    for page_index in range(len(doc)):
-        page = doc[page_index]
-        text = page.get_text("text") or ""
-        lower_text = text.lower()
-        page_number = page_index + 1
-
-        if (
-            "datum" not in lower_text
-            and "ngvd" not in lower_text
-            and "navd" not in lower_text
-            and "nad" not in lower_text
-            and "state plane" not in lower_text
-        ):
-            continue
-
-        metadata["metadata_pages"].append(page_number)
-
-        lines = text.splitlines()
-
-        for line in lines:
-            lower_line = line.lower()
-
-            if (
-                "datum" in lower_line
-                or "ngvd" in lower_line
-                or "navd" in lower_line
-                or "nad" in lower_line
-                or "state plane" in lower_line
-            ):
-                metadata["evidence"].append({
-                    "page": page_number,
-                    "line": line.strip(),
-                })
-
-                if "ngvd 1929" in lower_line or "ngvd1929" in lower_line:
-                    metadata["vertical_datum"] = "NGVD 1929"
-
-                if "navd 1988" in lower_line or "navd88" in lower_line or "navd 88" in lower_line:
-                    metadata["vertical_datum"] = "NAVD 1988"
-
-                if "nad 83" in lower_line or "nad83" in lower_line:
-                    metadata["horizontal_datum"] = "NAD 83"
-
-                if "nad 27" in lower_line or "nad27" in lower_line:
-                    metadata["horizontal_datum"] = "NAD 27"
-
-                if "florida state plane" in lower_line and "west zone" in lower_line:
-                    metadata["coordinate_system"] = "Florida State Plane, West Zone"
-
-                elif "state plane" in lower_line and not metadata["coordinate_system"]:
-                    metadata["coordinate_system"] = "State Plane"
-
-    doc.close()
-
+    metadata, _, _ = scan_and_extract_metadata(pdf_path)
     return metadata
 
 def analyze_page(text):
@@ -121,29 +57,63 @@ def analyze_page(text):
     return classification
 
 def scanner(pdf_path, log=None, verbose=False):
+    _, extraction_pages, reference_pages = scan_and_extract_metadata(
+        pdf_path, log=log, verbose=verbose
+    )
+    return extraction_pages, reference_pages
+
+def scan_and_extract_metadata(pdf_path, log=None, verbose=False):
+    """Single fitz pass: returns (metadata, extraction_page_indices, reference_page_indices)."""
     import fitz
+    metadata = {
+        "horizontal_datum": "",
+        "vertical_datum": "",
+        "coordinate_system": "",
+        "metadata_pages": [],
+        "evidence": [],
+    }
     extraction_pages = []
     reference_pages = []
 
     doc = fitz.open(pdf_path)
-
     for page_index in range(len(doc)):
         page = doc[page_index]
         text = page.get_text("text") or ""
+        lower_text = text.lower()
+        page_number = page_index + 1
 
         classification = analyze_page(text)
-
         if verbose and classification != "OTHER" and log:
-            log(f"  - Page {page_index + 1}: {classification}")
-
+            log(f"  - Page {page_number}: {classification}")
         if classification == "PROJECT_CONTROL_TABLE":
             extraction_pages.append(page_index)
         elif classification != "OTHER":
             reference_pages.append(page_index)
 
-    doc.close()
+        if not any(kw in lower_text for kw in ("datum", "ngvd", "navd", "nad", "state plane")):
+            continue
 
-    return extraction_pages, reference_pages
+        metadata["metadata_pages"].append(page_number)
+        for line in text.splitlines():
+            lower_line = line.lower()
+            if not any(kw in lower_line for kw in ("datum", "ngvd", "navd", "nad", "state plane")):
+                continue
+            metadata["evidence"].append({"page": page_number, "line": line.strip()})
+            if "ngvd 1929" in lower_line or "ngvd1929" in lower_line:
+                metadata["vertical_datum"] = "NGVD 1929"
+            if "navd 1988" in lower_line or "navd88" in lower_line or "navd 88" in lower_line:
+                metadata["vertical_datum"] = "NAVD 1988"
+            if "nad 83" in lower_line or "nad83" in lower_line:
+                metadata["horizontal_datum"] = "NAD 83"
+            if "nad 27" in lower_line or "nad27" in lower_line:
+                metadata["horizontal_datum"] = "NAD 27"
+            if "florida state plane" in lower_line and "west zone" in lower_line:
+                metadata["coordinate_system"] = "Florida State Plane, West Zone"
+            elif "state plane" in lower_line and not metadata["coordinate_system"]:
+                metadata["coordinate_system"] = "State Plane"
+
+    doc.close()
+    return metadata, extraction_pages, reference_pages
 
 def parse_blob_records(text):
     records = []
@@ -338,15 +308,19 @@ def write_csv(records, output_path):
         for record in records:
             writer.writerow(record)
 
-def run_control_point_pipeline(pdf_path, output_path, log=None):
-    metadata = extract_project_metadata(pdf_path)
-
+def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardize=True):
+    """
+    do_standardize=False: skip datum standardization, confidence scoring, and ID
+    assignment — the batch runner performs those steps in the main process after
+    collecting records from all PDFs.
+    """
     if log:
         log("  Reading project metadata…")
-
     if log:
         log("  Scanning pages to find control point tables…")
-    extraction_page_indices, reference_page_indices = scanner(pdf_path, log=log, verbose=False)
+    metadata, extraction_page_indices, reference_page_indices = scan_and_extract_metadata(
+        pdf_path, log=log, verbose=False
+    )
 
     if log:
         if extraction_page_indices:
@@ -370,9 +344,10 @@ def run_control_point_pipeline(pdf_path, output_path, log=None):
         log("  Validating + normalizing extracted data…")
     all_records = validate_and_normalize_records(all_records, log=log)
 
-    if log:
-        log("  Standardizing datums (NAD 83 / NAVD 1988)…")
-    all_records = standardize_records(all_records, log=log)
+    if do_standardize:
+        if log:
+            log("  Standardizing datums (NAD 83 / NAVD 1988)…")
+        all_records = standardize_records(all_records, log=log)
 
     if log:
         log("  Deduplicating (exact) + flagging uncertain duplicates…")
@@ -383,13 +358,14 @@ def run_control_point_pipeline(pdf_path, output_path, log=None):
     )
     all_records = flag_uncertain_duplicates(all_records, log=log, context=Path(pdf_path).name)
 
-    if log:
-        log("  Assigning system point IDs…")
-    all_records = assign_system_point_ids(all_records, log=log)
+    if do_standardize:
+        if log:
+            log("  Assigning system point IDs…")
+        all_records = assign_system_point_ids(all_records, log=log)
 
-    if log:
-        log("  Scoring confidence + trust signals…")
-    all_records = apply_confidence(all_records)
+        if log:
+            log("  Scoring confidence + trust signals…")
+        all_records = apply_confidence(all_records)
 
     if log:
         log(f"  Writing CSV output ({len(all_records)} record(s))…")

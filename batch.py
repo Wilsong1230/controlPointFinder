@@ -1,13 +1,15 @@
 from pathlib import Path
 from datetime import datetime, timezone
 import json
-import os as _os
 import tempfile
 import zipfile
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from control_point import run_control_point_pipeline, write_csv
+from confidence import apply_confidence
+from datum_standardization import standardize_records
 from output_control import deduplicate_records, flag_uncertain_duplicates, write_arcgis_csv
+from point_id import assign_system_point_ids
 
 INDIVIDUAL_CSV_FOLDER = "individual_csvs"
 CLEAN_CSV_NAME = "control_points_navd88.csv"
@@ -173,7 +175,7 @@ def _run_pdf_list(
     workers: int | None = None,
 ):
     if workers is None:
-        workers = min(8, _os.cpu_count() or 1)
+        workers = 8
 
     output_folder = Path(output_folder)
     individual_output_folder = output_folder / INDIVIDUAL_CSV_FOLDER
@@ -201,7 +203,7 @@ def _run_pdf_list(
         for i, p in enumerate(pdf_list, start=1)
     }
 
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         future_to_index = {
             pool.submit(_process_single_pdf, args_by_index[i]): i
             for i in range(1, total + 1)
@@ -252,6 +254,11 @@ def _run_pdf_list(
 
     if tee_log:
         tee_log("")
+        tee_log("Standardizing datums (NAD 83 / NAVD 1988)…")
+    all_valid_records = standardize_records(all_valid_records, log=tee_log)
+    all_valid_records = apply_confidence(all_valid_records)
+
+    if tee_log:
         tee_log("Combining results into one CSV…")
 
     all_valid_records, cross_removed = deduplicate_records(
@@ -285,6 +292,8 @@ def _run_pdf_list(
     merged = other_records + accepted_from_modal
     clean_records, auto_review_records = split_clean_vs_review(merged)
     review_records = auto_review_records + skipped_from_modal
+
+    assign_system_point_ids(clean_records + review_records, log=tee_log)
 
     write_csv(clean_records + review_records, str(combined_csv_path))
     write_csv(clean_records, str(clean_csv_path))
@@ -333,11 +342,13 @@ def _run_pdf_list(
 
 
 def _process_single_pdf(args: tuple) -> dict:
-    """Picklable worker for ProcessPoolExecutor. No callbacks — returns result dict."""
+    """Thread worker: extract + validate + per-file dedup. No datum standardization or ID
+    assignment — those run in the main process after all PDFs complete."""
     pdf_path_str, output_csv_path_str = args
-    from control_point import run_control_point_pipeline
     try:
-        result = run_control_point_pipeline(pdf_path_str, output_csv_path_str, log=None)
+        result = run_control_point_pipeline(
+            pdf_path_str, output_csv_path_str, log=None, do_standardize=False
+        )
         return {"ok": True, "result": result, "pdf_path": pdf_path_str, "output_csv": output_csv_path_str}
     except Exception as exc:
         return {"ok": False, "error": str(exc), "pdf_path": pdf_path_str, "output_csv": output_csv_path_str}

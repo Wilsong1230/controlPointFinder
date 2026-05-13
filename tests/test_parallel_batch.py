@@ -18,7 +18,7 @@ _FAKE_PIPELINE_RESULT = {
 
 
 def test_process_single_pdf_success():
-    with patch("control_point.run_control_point_pipeline", return_value=_FAKE_PIPELINE_RESULT):
+    with patch("batch.run_control_point_pipeline", return_value=_FAKE_PIPELINE_RESULT):
         from batch import _process_single_pdf
         result = _process_single_pdf(("fake.pdf", "out.csv"))
     assert result["ok"] is True
@@ -28,7 +28,7 @@ def test_process_single_pdf_success():
 
 
 def test_process_single_pdf_handles_exception():
-    with patch("control_point.run_control_point_pipeline", side_effect=RuntimeError("bad pdf")):
+    with patch("batch.run_control_point_pipeline", side_effect=RuntimeError("bad pdf")):
         from batch import _process_single_pdf
         result = _process_single_pdf(("bad.pdf", "out.csv"))
     assert result["ok"] is False
