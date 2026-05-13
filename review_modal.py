@@ -165,6 +165,14 @@ class ReviewModal:
             ))
 
         self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self._tree.bind("<KeyPress-a>", lambda e: self._mark_accept())
+        self._tree.bind("<KeyPress-A>", lambda e: self._mark_accept())
+        self._tree.bind("<KeyPress-s>", lambda e: self._mark_skip())
+        self._tree.bind("<KeyPress-S>", lambda e: self._mark_skip())
+        self._tree.bind("<KeyPress-e>", lambda e: self._start_edit())
+        self._tree.bind("<KeyPress-E>", lambda e: self._start_edit())
+        self._tree.bind("<Down>", self._on_nav_key)
+        self._tree.bind("<Up>", self._on_nav_key)
 
     def _reload_table(self):
         for iid in self._tree.get_children():
@@ -191,6 +199,23 @@ class ReviewModal:
             elif action in ("accepted", "edited"):
                 self._tree.item(str(i), tags=("accepted",))
                 self._tree.tag_configure("accepted", foreground="#2e7d32")
+
+    def _advance_to_next_unreviewed(self):
+        if self._current_index is None:
+            return
+        idx = next_unreviewed(self._actions, len(self._records), self._current_index)
+        if idx is not None:
+            self._select_row(idx)
+
+    def _on_nav_key(self, event):
+        if self._current_index is None:
+            return "break"
+        if event.keysym == "Down":
+            target = min(self._current_index + 1, len(self._records) - 1)
+        else:
+            target = max(self._current_index - 1, 0)
+        self._select_row(target)
+        return "break"
 
     def _build_pdf_viewer(self, parent):
         zoom_bar = tk.Frame(parent)
@@ -289,6 +314,7 @@ class ReviewModal:
         self._edit_frame.pack_forget()
         self._refresh_row(self._current_index)
         self._update_status()
+        self._advance_to_next_unreviewed()
 
     def _mark_skip(self):
         if self._current_index is None:
@@ -297,6 +323,7 @@ class ReviewModal:
         self._edit_frame.pack_forget()
         self._refresh_row(self._current_index)
         self._update_status()
+        self._advance_to_next_unreviewed()
 
     def _start_edit(self):
         if self._current_index is None:
@@ -319,6 +346,7 @@ class ReviewModal:
         self._edit_frame.pack_forget()
         self._refresh_row(self._current_index)
         self._update_status()
+        self._advance_to_next_unreviewed()
 
     def _refresh_row(self, idx: int):
         action = self._actions.get(idx, "")
