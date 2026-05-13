@@ -360,6 +360,6 @@ def standardize_records(records: list[dict[str, Any]], log: LogFn = None) -> lis
     """Standardize a list of records in place."""
     if not records:
         return records
-    with ThreadPoolExecutor(max_workers=20) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda r: standardize_record(r, log=log), records))
     return records
