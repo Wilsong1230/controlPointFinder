@@ -173,6 +173,8 @@ class ReviewModal:
         self._tree.bind("<KeyPress-E>", lambda e: self._start_edit())
         self._tree.bind("<Down>", self._on_nav_key)
         self._tree.bind("<Up>", self._on_nav_key)
+        self._tree.bind("<Button-2>", self._on_header_rightclick)
+        self._tree.bind("<Button-3>", self._on_header_rightclick)
 
     def _reload_table(self):
         for iid in self._tree.get_children():
@@ -199,6 +201,53 @@ class ReviewModal:
             elif action in ("accepted", "edited"):
                 self._tree.item(str(i), tags=("accepted",))
                 self._tree.tag_configure("accepted", foreground="#2e7d32")
+
+    def _swap_columns(self, field_a: str, field_b: str):
+        self._records = swap_column_data(self._records, field_a, field_b)
+        self._reload_table()
+
+    def _fill_column(self, field: str):
+        from tkinter import simpledialog
+        value = simpledialog.askstring(
+            "Fill Column",
+            f"New value for all rows in '{_FIELD_LABELS[field]}':",
+            parent=self.window,
+        )
+        if not value:
+            return
+        self._records = fill_column_data(self._records, field, value)
+        self._reload_table()
+
+    def _clear_column(self, field: str):
+        self._records = clear_column_data(self._records, field)
+        self._reload_table()
+
+    def _on_header_rightclick(self, event):
+        region = self._tree.identify_region(event.x, event.y)
+        if region != "heading":
+            return
+        col_id = self._tree.identify_column(event.x)
+        try:
+            col_index = int(col_id.lstrip("#")) - 1
+            col_name = _COLS[col_index]
+        except (ValueError, IndexError):
+            return
+
+        menu = tk.Menu(self.window, tearoff=0)
+        if col_name in _EDITABLE_FIELDS:
+            swap_menu = tk.Menu(menu, tearoff=0)
+            for other in _EDITABLE_FIELDS:
+                if other != col_name:
+                    swap_menu.add_command(
+                        label=_FIELD_LABELS[other],
+                        command=lambda a=col_name, b=other: self._swap_columns(a, b),
+                    )
+            menu.add_cascade(label="Swap with…", menu=swap_menu)
+            menu.add_command(label="Fill all rows…", command=lambda: self._fill_column(col_name))
+            menu.add_command(label="Clear all", command=lambda: self._clear_column(col_name))
+        else:
+            menu.add_command(label="Not editable", state="disabled")
+        menu.tk_popup(event.x_root, event.y_root)
 
     def _advance_to_next_unreviewed(self):
         if self._current_index is None:
