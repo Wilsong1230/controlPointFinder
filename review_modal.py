@@ -260,6 +260,10 @@ class ReviewModal:
         self._btn_skip.pack(side="left", padx=4)
         self._btn_edit = tk.Button(left, text="Edit Fields", width=10, command=self._start_edit)
         self._btn_edit.pack(side="left", padx=4)
+        tk.Button(
+            left, text="Accept All Remaining", width=20,
+            command=self._accept_all_remaining,
+        ).pack(side="left", padx=(16, 4))
 
         # Inline edit panel (hidden until edit mode)
         self._edit_frame = tk.Frame(parent, bd=1, relief=tk.GROOVE, padx=6, pady=4)
@@ -347,6 +351,13 @@ class ReviewModal:
         self._refresh_row(self._current_index)
         self._update_status()
         self._advance_to_next_unreviewed()
+
+    def _accept_all_remaining(self):
+        for i in range(len(self._records)):
+            if i not in self._actions:
+                self._actions[i] = "accepted"
+                self._refresh_row(i)
+        self._update_status()
 
     def _refresh_row(self, idx: int):
         action = self._actions.get(idx, "")
