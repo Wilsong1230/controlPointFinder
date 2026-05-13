@@ -65,4 +65,10 @@ if "pdfplumber" not in sys.modules:
 if "requests" not in sys.modules:
     requests_stub = _make_stub("requests")
     requests_stub.get = lambda *a, **kw: None
+
+    class _Session:
+        def get(self, *a, **kw):
+            return None
+
+    requests_stub.Session = _Session
     sys.modules["requests"] = requests_stub

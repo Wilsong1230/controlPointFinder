@@ -9,19 +9,20 @@ datums on each record for audit.
 from __future__ import annotations
 
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
 import requests
 from pyproj import Transformer
 
-_NCAT_SESSION: Optional[requests.Session] = None
+_tls = threading.local()
 
 
 def _ncat_session() -> requests.Session:
-    global _NCAT_SESSION
-    if _NCAT_SESSION is None:
-        _NCAT_SESSION = requests.Session()
-    return _NCAT_SESSION
+    if not hasattr(_tls, "session"):
+        _tls.session = requests.Session()
+    return _tls.session
 
 NAVD88_LABEL = "NAVD 1988"
 NAD83_LABEL = "NAD 83"
@@ -357,6 +358,8 @@ def standardize_record(record: dict[str, Any], log: LogFn = None) -> dict[str, A
 
 def standardize_records(records: list[dict[str, Any]], log: LogFn = None) -> list[dict[str, Any]]:
     """Standardize a list of records in place."""
-    for record in records:
-        standardize_record(record, log=log)
+    if not records:
+        return records
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        list(pool.map(lambda r: standardize_record(r, log=log), records))
     return records
