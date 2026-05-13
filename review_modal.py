@@ -7,6 +7,44 @@ import tkinter as tk
 from tkinter import ttk
 
 
+_COLS = (
+    "idx", "point_id", "easting", "northing", "elevation",
+    "description", "score", "page", "source", "action",
+)
+_EDITABLE_FIELDS = ("easting", "northing", "elevation", "description")
+_FIELD_LABELS = {
+    "easting": "Easting",
+    "northing": "Northing",
+    "elevation": "Elevation",
+    "description": "Description",
+}
+
+
+def swap_column_data(records: list[dict], field_a: str, field_b: str) -> list[dict]:
+    result = []
+    for rec in records:
+        r = dict(rec)
+        r[field_a] = rec.get(field_b, "")
+        r[field_b] = rec.get(field_a, "")
+        result.append(r)
+    return result
+
+
+def fill_column_data(records: list[dict], field: str, value: str) -> list[dict]:
+    return [{**rec, field: value} for rec in records]
+
+
+def clear_column_data(records: list[dict], field: str) -> list[dict]:
+    return [{**rec, field: ""} for rec in records]
+
+
+def next_unreviewed(actions: dict, total: int, current: int) -> int | None:
+    for i in range(current + 1, total):
+        if i not in actions:
+            return i
+    return None
+
+
 def apply_modal_actions(
     records: list[dict[str, Any]],
     actions: dict[int, str],
