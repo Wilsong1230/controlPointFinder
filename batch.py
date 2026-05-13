@@ -328,6 +328,17 @@ def _run_pdf_list(
     }
 
 
+def _process_single_pdf(args: tuple) -> dict:
+    """Picklable worker for ProcessPoolExecutor. No callbacks — returns result dict."""
+    pdf_path_str, output_csv_path_str = args
+    from control_point import run_control_point_pipeline
+    try:
+        result = run_control_point_pipeline(pdf_path_str, output_csv_path_str, log=None)
+        return {"ok": True, "result": result, "pdf_path": pdf_path_str, "output_csv": output_csv_path_str}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "pdf_path": pdf_path_str, "output_csv": output_csv_path_str}
+
+
 def run_batch(input_folder, output_folder, log=None, progress=None,
               review_request_q=None, review_result_q=None):
     input_folder = Path(input_folder)
