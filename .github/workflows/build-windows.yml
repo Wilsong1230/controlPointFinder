@@ -18,11 +18,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pyproj pymupdf pdfplumber pyinstaller tkinterdnd2
+          pip install requests pyproj pymupdf pdfplumber pyinstaller tkinterdnd2 pillow
+
+      - name: Convert PNG to ICO
+        run: |
+          python -c "from PIL import Image; img = Image.open('PDF_PARSER.png'); img.save('PDF_PARSER.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])"
 
       - name: Build EXE
         run: |
-          pyinstaller --onedir --windowed --name ControlPointExtractor gui.py --hidden-import=requests --hidden-import=pyproj --hidden-import=fitz --hidden-import=pdfplumber --hidden-import=tkinterdnd2
+          pyinstaller --onedir --windowed --name ControlPointExtractor --icon PDF_PARSER.ico gui.py --hidden-import=requests --hidden-import=pyproj --hidden-import=fitz --hidden-import=pdfplumber --hidden-import=tkinterdnd2
 
       - name: Zip output folder
         run: Compress-Archive -Path dist/ControlPointExtractor -DestinationPath dist/ControlPointExtractor.zip -Force
