@@ -62,7 +62,7 @@ def scanner(pdf_path, log=None, verbose=False):
     )
     return extraction_pages, reference_pages
 
-def scan_and_extract_metadata(pdf_path, log=None, verbose=False):
+def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None):
     """Single fitz pass: returns (metadata, extraction_page_indices, reference_page_indices)."""
     import fitz
     metadata = {
@@ -75,7 +75,10 @@ def scan_and_extract_metadata(pdf_path, log=None, verbose=False):
     extraction_pages = []
     reference_pages = []
 
-    doc = fitz.open(pdf_path)
+    if pdf_bytes is not None:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    else:
+        doc = fitz.open(pdf_path)
     for page_index in range(len(doc)):
         page = doc[page_index]
         text = page.get_text("text") or ""
@@ -216,12 +219,14 @@ def validate_record(record):
 
     return True
 
-def extract_control_points(pdf_path, page_indices, log=None):
+def extract_control_points(pdf_path, page_indices, log=None, pdf_bytes=None):
     import pdfplumber
+    import io
 
     all_records = []
 
-    with pdfplumber.open(pdf_path) as pdf:
+    src = io.BytesIO(pdf_bytes) if pdf_bytes is not None else pdf_path
+    with pdfplumber.open(src) as pdf:
         for page_index in page_indices:
             if log:
                 log(f"  Extracting table from page {page_index + 1}…")
@@ -308,18 +313,20 @@ def write_csv(records, output_path):
         for record in records:
             writer.writerow(record)
 
-def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardize=True):
+def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardize=True, pdf_bytes=None):
     """
     do_standardize=False: skip datum standardization, confidence scoring, and ID
     assignment — the batch runner performs those steps in the main process after
     collecting records from all PDFs.
+    pdf_bytes: pre-read PDF content; when provided fitz/pdfplumber read from memory
+    instead of re-opening the file, halving NAS file handle operations.
     """
     if log:
         log("  Reading project metadata…")
     if log:
         log("  Scanning pages to find control point tables…")
     metadata, extraction_page_indices, reference_page_indices = scan_and_extract_metadata(
-        pdf_path, log=log, verbose=False
+        pdf_path, log=log, verbose=False, pdf_bytes=pdf_bytes
     )
 
     if log:
@@ -329,7 +336,7 @@ def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardiz
         else:
             log("  No control point table pages found.")
 
-    records = extract_control_points(pdf_path, extraction_page_indices, log=log)
+    records = extract_control_points(pdf_path, extraction_page_indices, log=log, pdf_bytes=pdf_bytes)
 
     all_records = []
 

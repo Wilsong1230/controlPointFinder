@@ -114,24 +114,29 @@ def _utc_iso_now() -> str:
 
 def _tee_logger(output_folder: Path, log=None):
     """
-    Returns (tee_log_fn, get_lines, log_path).
+    Returns (tee_log_fn, get_lines, log_path, close_fn).
     tee_log_fn writes to output_folder/extraction_log.txt and forwards to `log`.
+    Call close_fn() when done to release the file handle.
     """
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
     log_path = output_folder / LOG_TXT_NAME
     lines: list[str] = []
 
+    # Start fresh, then hold a single file handle open for the entire run
+    # to avoid opening/closing the log on every write (critical for NAS output).
+    log_path.write_text("", encoding="utf-8")
+    _fh = log_path.open("a", encoding="utf-8")
+
     def tee(message: str):
         msg = str(message)
         lines.append(msg)
-        log_path.open("a", encoding="utf-8").write(msg + "\n")
+        _fh.write(msg + "\n")
+        _fh.flush()
         if log:
             log(msg)
 
-    # Start fresh for each run folder.
-    log_path.write_text("", encoding="utf-8")
-    return tee, (lambda: list(lines)), str(log_path)
+    return tee, (lambda: list(lines)), str(log_path), _fh.close
 
 
 def _write_summary(output_folder: Path, result: dict, started_at: str, ended_at: str) -> str:
@@ -185,7 +190,7 @@ def _run_pdf_list(
     output_folder.mkdir(parents=True, exist_ok=True)
     individual_output_folder.mkdir(parents=True, exist_ok=True)
 
-    tee_log, get_log_lines, log_path = _tee_logger(output_folder, log=log)
+    tee_log, get_log_lines, log_path, close_log = _tee_logger(output_folder, log=log)
     started_at = _utc_iso_now()
 
     if tee_log:
@@ -329,6 +334,7 @@ def _run_pdf_list(
         "duplicate_points_removed": exact_duplicates_removed_total + cross_removed,
     }, started_at=started_at, ended_at=ended_at)
 
+    close_log()
     return {
         "pdf_count": len(pdf_paths),
         "results": results,
@@ -352,8 +358,12 @@ def _process_single_pdf(args: tuple) -> dict:
     assignment — those run in the main process after all PDFs complete."""
     pdf_path_str, output_csv_path_str = args
     try:
+        pdf_bytes = Path(pdf_path_str).read_bytes()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "pdf_path": pdf_path_str, "output_csv": output_csv_path_str}
+    try:
         result = run_control_point_pipeline(
-            pdf_path_str, output_csv_path_str, log=None, do_standardize=False
+            pdf_path_str, output_csv_path_str, log=None, do_standardize=False, pdf_bytes=pdf_bytes
         )
         return {"ok": True, "result": result, "pdf_path": pdf_path_str, "output_csv": output_csv_path_str}
     except Exception as exc:
