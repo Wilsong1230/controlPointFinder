@@ -22,11 +22,41 @@ jobs:
 
       - name: Convert PNG to ICO
         run: |
-          python -c "from PIL import Image; img = Image.open('PDF_PARSER.png'); img.save('PDF_PARSER.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])"
+          python -c "
+from PIL import Image
+img = Image.open('PDF_PARSER.png').convert('RGBA')
+sizes = [(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)]
+img.save('PDF_PARSER.ico', format='ICO', sizes=sizes)
+print('ICO created successfully')
+"
 
       - name: Build EXE
         run: |
-          pyinstaller --onedir --windowed --name ControlPointExtractor --icon PDF_PARSER.ico gui.py --hidden-import=requests --hidden-import=pyproj --hidden-import=fitz --hidden-import=pdfplumber --hidden-import=tkinterdnd2
+          pyinstaller --onedir --windowed --name ControlPointExtractor --icon PDF_PARSER.ico --add-data "PDF_PARSER.png;." gui.py --hidden-import=requests --hidden-import=pyproj --hidden-import=fitz --hidden-import=pdfplumber --hidden-import=tkinterdnd2
+
+      - name: Create self-signed certificate
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Subject "CN=Control Point Extractor, O=Wilson Gomez" `
+            -Type CodeSigning `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "Control Point Extractor" `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -NotAfter (Get-Date).AddYears(3)
+          $pwd = ConvertTo-SecureString -String "build" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath build_cert.pfx -Password $pwd
+
+      - name: Sign EXE
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
+            -Recurse -Filter "signtool.exe" `
+            | Where-Object { $_.FullName -like "*x64*" } `
+            | Select-Object -First 1 -ExpandProperty FullName
+          & $signtool sign /f build_cert.pfx /p "build" `
+            /tr http://timestamp.digicert.com /td sha256 /fd sha256 `
+            "dist\ControlPointExtractor\ControlPointExtractor.exe"
 
       - name: Zip output folder
         run: Compress-Archive -Path dist/ControlPointExtractor -DestinationPath dist/ControlPointExtractor.zip -Force

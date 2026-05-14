@@ -1,5 +1,6 @@
 import threading
 import queue
+import sys
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
@@ -8,18 +9,15 @@ import base64
 
 from review_modal import ReviewModal
 
-from batch import (
-    run_batch_packaged,
-    run_single_packaged,
-    run_batch_folder,
-    run_single_folder,
-    run_multi,
-    run_multi_packaged,
-)
-
 import os
 import subprocess
-from tkinterdnd2 import TkinterDnD, DND_FILES
+
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    _DND_AVAILABLE = True
+except Exception:
+    _DND_AVAILABLE = False
+    DND_FILES = None
 
 COLORS = {
     "bg":              "#fafaf8",
@@ -43,9 +41,11 @@ COLORS = {
 def _primary_btn(parent, text, command, **kwargs):
     return tk.Button(
         parent, text=text, command=command,
-        bg=COLORS["accent"], fg="white",
+        bg=COLORS["accent"], fg="#1c0a00",
         font=("Arial", 11, "bold"),
-        relief="flat", bd=0, padx=16, pady=6,
+        relief="solid", bd=2,
+        highlightbackground="#b45309", highlightthickness=0,
+        padx=16, pady=7,
         activebackground="#b45309", activeforeground="white",
         cursor="hand2",
         **kwargs,
@@ -55,12 +55,12 @@ def _primary_btn(parent, text, command, **kwargs):
 def _secondary_btn(parent, text, command, **kwargs):
     return tk.Button(
         parent, text=text, command=command,
-        bg=COLORS["card"], fg=COLORS["text_sec"],
+        bg="#ede9e8", fg=COLORS["text"],
         font=("Arial", 10),
-        relief="flat", bd=0, padx=10, pady=5,
-        highlightbackground=COLORS["pill_off_border"],
-        highlightthickness=1,
-        activebackground=COLORS["bg"],
+        relief="solid", bd=1,
+        highlightthickness=0,
+        padx=10, pady=6,
+        activebackground="#e0dbd9",
         cursor="hand2",
         **kwargs,
     )
@@ -119,18 +119,18 @@ class ControlPointApp:
         style = ttk.Style(self.root)
         style.theme_use("clam")
         style.configure("TFrame", background=COLORS["bg"])
-        style.configure("TNotebook", background=COLORS["bg"], borderwidth=0, tabmargins=0)
+        style.configure("TNotebook", background=COLORS["border"], borderwidth=0, tabmargins=0)
         style.configure(
             "TNotebook.Tab",
-            background=COLORS["bg"],
-            foreground=COLORS["text_muted"],
+            background=COLORS["border"],
+            foreground=COLORS["text_sec"],
             padding=[18, 8],
             font=("Arial", 10),
         )
         style.map(
             "TNotebook.Tab",
-            background=[("selected", COLORS["bg"])],
-            foreground=[("selected", COLORS["accent_dark"])],
+            background=[("selected", COLORS["card"]), ("active", "#f0eeec")],
+            foreground=[("selected", COLORS["accent_dark"]), ("active", COLORS["text"])],
             font=[("selected", ("Arial", 10, "bold"))],
         )
         style.configure(
@@ -222,22 +222,31 @@ class ControlPointApp:
             pady=8,
         )
         self._drop_zone.pack(fill="x", padx=12, pady=(0, 8))
-        tk.Label(self._drop_zone, text="📂  Drop folder or PDF(s) here",
-                 font=("Arial", 10, "bold"),
-                 bg=COLORS["accent_light"], fg=COLORS["accent_dark"]).pack()
-        tk.Label(self._drop_zone, text="or use Browse below",
-                 font=("Arial", 9),
-                 bg=COLORS["accent_light"], fg=COLORS["text_muted"]).pack()
+        if _DND_AVAILABLE:
+            tk.Label(self._drop_zone, text="📂  Drop folder or PDF(s) here",
+                     font=("Arial", 10, "bold"),
+                     bg=COLORS["accent_light"], fg=COLORS["accent_dark"]).pack()
+            tk.Label(self._drop_zone, text="or use Browse below",
+                     font=("Arial", 9),
+                     bg=COLORS["accent_light"], fg=COLORS["text_muted"]).pack()
+        else:
+            tk.Label(self._drop_zone, text="📂  Use Browse to select files",
+                     font=("Arial", 10, "bold"),
+                     bg=COLORS["accent_light"], fg=COLORS["accent_dark"]).pack()
+            tk.Label(self._drop_zone, text="(drag-and-drop not available on this system)",
+                     font=("Arial", 9),
+                     bg=COLORS["accent_light"], fg=COLORS["text_muted"]).pack()
 
-        self._drop_zone.drop_target_register(DND_FILES)
-        self._drop_zone.dnd_bind("<<DragEnter>>", self._on_drag_enter)
-        self._drop_zone.dnd_bind("<<DragLeave>>", self._on_drag_leave)
-        self._drop_zone.dnd_bind("<<Drop>>", self._on_drop)
-        for child in self._drop_zone.winfo_children():
-            child.drop_target_register(DND_FILES)
-            child.dnd_bind("<<DragEnter>>", self._on_drag_enter)
-            child.dnd_bind("<<DragLeave>>", self._on_drag_leave)
-            child.dnd_bind("<<Drop>>", self._on_drop)
+        if _DND_AVAILABLE:
+            self._drop_zone.drop_target_register(DND_FILES)
+            self._drop_zone.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+            self._drop_zone.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+            self._drop_zone.dnd_bind("<<Drop>>", self._on_drop)
+            for child in self._drop_zone.winfo_children():
+                child.drop_target_register(DND_FILES)
+                child.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+                child.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+                child.dnd_bind("<<Drop>>", self._on_drop)
 
         self._pill_row(
             input_card, self.input_mode,
@@ -855,6 +864,14 @@ class ControlPointApp:
 
     def run_extraction_thread(self, input_value, output_destination):
         try:
+            from batch import (
+                run_batch_packaged,
+                run_single_packaged,
+                run_batch_folder,
+                run_single_folder,
+                run_multi,
+                run_multi_packaged,
+            )
             log = self.log_threadsafe
             progress = lambda payload: self.root.after(0, lambda: self._update_progress_ui(payload))
             rkw = {
@@ -928,7 +945,9 @@ class ControlPointApp:
         if p.suffix.lower() == ".zip":
             p = p.parent
         try:
-            if os.name == "posix":
+            if os.name == "nt":
+                os.startfile(str(p))
+            elif sys.platform == "darwin":
                 subprocess.run(["open", str(p)], check=False)
             else:
                 subprocess.run(["xdg-open", str(p)], check=False)
@@ -936,7 +955,19 @@ class ControlPointApp:
             messagebox.showerror("Open Folder Failed", str(exc))
 
 
+def _set_window_icon(root):
+    try:
+        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base, "PDF_PARSER.png")
+        if os.path.exists(icon_path):
+            img = tk.PhotoImage(file=icon_path)
+            root.iconphoto(True, img)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
-    root = TkinterDnD.Tk()
+    root = TkinterDnD.Tk() if _DND_AVAILABLE else tk.Tk()
+    _set_window_icon(root)
     app = ControlPointApp(root)
     root.mainloop()
