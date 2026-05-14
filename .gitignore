@@ -1,0 +1,18 @@
+# Folders
+docs/
+input_pdfs/
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# macOS
+.DS_Store
+
+# Misc
+*.zip
+out.csv
