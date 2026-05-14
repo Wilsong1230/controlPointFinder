@@ -5,6 +5,7 @@ import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import nas_store
 from control_point import run_control_point_pipeline, write_csv
 from confidence import apply_confidence
 from datum_standardization import standardize_records
@@ -173,6 +174,7 @@ def _run_pdf_list(
     review_request_q=None,
     review_result_q=None,
     workers: int | None = None,
+    registry_path: Path | None = None,
 ):
     if workers is None:
         workers = 8
@@ -293,7 +295,11 @@ def _run_pdf_list(
     clean_records, auto_review_records = split_clean_vs_review(merged)
     review_records = auto_review_records + skipped_from_modal
 
-    assign_system_point_ids(clean_records + review_records, log=tee_log)
+    assign_system_point_ids(
+        clean_records + review_records,
+        log=tee_log,
+        **({"registry_path": registry_path} if registry_path is not None else {}),
+    )
 
     write_csv(clean_records + review_records, str(combined_csv_path))
     write_csv(clean_records, str(clean_csv_path))
@@ -357,19 +363,21 @@ def _process_single_pdf(args: tuple) -> dict:
 def run_batch(input_folder, output_folder, log=None, progress=None,
               review_request_q=None, review_result_q=None, workers=None):
     input_folder = Path(input_folder)
-    pdf_paths = sorted(
-        path for path in input_folder.rglob("*")
-        if path.is_file() and path.suffix.lower() == ".pdf"
+    pdf_paths = nas_store.get_pdf_paths(input_folder, log=log)
+    registry_path = nas_store.get_registry_path(
+        input_folder,
+        local_fallback=Path("point_id_registry.json"),
     )
     return _run_pdf_list(
         pdf_paths,
         output_folder=Path(output_folder),
         log=log,
         progress=progress,
-        context_label=f"Searching for PDFs in: {input_folder}",
+        context_label=f"Found {len(pdf_paths)} PDF(s) via index cache.",
         review_request_q=review_request_q,
         review_result_q=review_result_q,
         workers=workers,
+        registry_path=registry_path,
     )
 
 
