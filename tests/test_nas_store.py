@@ -138,3 +138,47 @@ def test_unreachable_folder_falls_back_to_rglob(tmp_path):
     missing = tmp_path / "does_not_exist"
     result = get_pdf_paths(missing)
     assert result == []
+
+
+def test_get_registry_path_returns_nas_path(tmp_path):
+    """get_registry_path returns path inside .controlpoint/ on the NAS."""
+    from nas_store import get_registry_path
+    result = get_registry_path(tmp_path)
+    assert result == tmp_path / ".controlpoint" / "point_id_registry.json"
+
+
+def test_get_registry_path_creates_store_dir(tmp_path):
+    """get_registry_path creates .controlpoint/ if it doesn't exist."""
+    from nas_store import get_registry_path
+    get_registry_path(tmp_path)
+    assert (tmp_path / ".controlpoint").is_dir()
+
+
+def test_get_registry_path_migrates_local_registry(tmp_path):
+    """If NAS registry missing but local exists, copies local to NAS."""
+    local_registry = tmp_path / "point_id_registry.json"
+    local_registry.write_text(json.dumps({"last_id": 42, "mapping": {"k": "CP000042"}}))
+
+    from nas_store import get_registry_path
+    nas_path = get_registry_path(tmp_path, local_fallback=local_registry)
+
+    assert nas_path.exists()
+    data = json.loads(nas_path.read_text())
+    assert data["last_id"] == 42
+
+
+def test_get_registry_path_no_migration_if_nas_exists(tmp_path):
+    """If NAS registry already exists, local file is not used."""
+    nas_dir = tmp_path / ".controlpoint"
+    nas_dir.mkdir()
+    nas_reg = nas_dir / "point_id_registry.json"
+    nas_reg.write_text(json.dumps({"last_id": 7, "mapping": {}}))
+
+    local_registry = tmp_path / "point_id_registry.json"
+    local_registry.write_text(json.dumps({"last_id": 99, "mapping": {}}))
+
+    from nas_store import get_registry_path
+    nas_path = get_registry_path(tmp_path, local_fallback=local_registry)
+
+    data = json.loads(nas_path.read_text())
+    assert data["last_id"] == 7  # NAS wins, local is ignored
