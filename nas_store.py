@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -10,6 +11,8 @@ _STORE_DIR = ".controlpoint"
 _INDEX_FILE = "pdf_index.json"
 _REGISTRY_FILE = "point_id_registry.json"
 _INDEX_VERSION = 1
+# 20 threads: NAS directory listing is network-latency-bound, not CPU-bound.
+# Overlapping waits is the key win; 20 is well within typical NAS connection limits.
 _SCAN_THREADS = 20
 
 
@@ -57,7 +60,9 @@ def _write_index(input_folder: Path, folders_data: dict) -> None:
     store.mkdir(parents=True, exist_ok=True)
     path = _index_path(input_folder)
     payload = {"version": _INDEX_VERSION, "folders": folders_data}
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _get_top_level_dirs(input_folder: Path) -> list[tuple[str, Path, float]]:
@@ -84,12 +89,11 @@ def get_pdf_paths(input_folder: Path, log=None) -> list[Path]:
     Falls back to rglob on any error accessing the cache.
     """
     input_folder = Path(input_folder)
-
     try:
         return _cached_get_pdf_paths(input_folder, log=log)
-    except Exception:
+    except Exception as exc:
         if log:
-            log("PDF index cache unavailable — falling back to full directory scan.")
+            log(f"PDF index cache error ({exc}) — falling back to full directory scan.")
         return _rglob_fallback(input_folder)
 
 
@@ -98,7 +102,9 @@ def _cached_get_pdf_paths(input_folder: Path, log=None) -> list[Path]:
     cached_folders: dict = index.get("folders", {})
 
     top_dirs = _get_top_level_dirs(input_folder)
-    stale = [(name, path) for name, path, mtime in top_dirs
+    # PDFs at the root of input_folder are not indexed; the expected structure
+    # is input_folder/<project-folder>/<sheets>.pdf (CD folder layout on NAS).
+    stale = [(name, path, mtime) for name, path, mtime in top_dirs
              if name not in cached_folders or cached_folders[name]["mtime"] != mtime]
     fresh = [(name, path, mtime) for name, path, mtime in top_dirs
              if name in cached_folders and cached_folders[name]["mtime"] == mtime]
@@ -114,14 +120,12 @@ def _cached_get_pdf_paths(input_folder: Path, log=None) -> list[Path]:
     new_folders_data: dict = {name: cached_folders[name] for name, _, _ in fresh}
 
     if stale:
+        stale_map = {path: (name, mtime) for name, path, mtime in stale}
         with ThreadPoolExecutor(max_workers=_SCAN_THREADS) as pool:
-            futures = {pool.submit(_scan_folder_for_pdfs, path): (name, path) for name, path in stale}
+            futures = {pool.submit(_scan_folder_for_pdfs, path): path for name, path, mtime in stale}
             for future in as_completed(futures):
-                name, path = futures[future]
-                try:
-                    mtime = path.stat().st_mtime
-                except OSError:
-                    mtime = 0.0
+                path = futures[future]
+                name, mtime = stale_map[path]
                 pdf_abs_paths = future.result()
                 rel_paths = sorted(
                     str(Path(p).relative_to(input_folder)) for p in pdf_abs_paths
@@ -156,7 +160,6 @@ def get_registry_path(input_folder: Path, *, local_fallback: Path | None = None)
     nas_path = store / _REGISTRY_FILE
 
     if not nas_path.exists() and local_fallback and Path(local_fallback).exists():
-        import shutil
         shutil.copy2(local_fallback, nas_path)
 
     return nas_path
