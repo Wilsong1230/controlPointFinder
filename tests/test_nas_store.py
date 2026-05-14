@@ -110,3 +110,31 @@ def test_partial_stale_rescans_only_changed_folder(tmp_path):
     assert "sheet1.pdf" in names
     assert "sheet2.pdf" in names
     assert "sheet3.pdf" in names
+
+
+def test_corrupted_index_rebuilds_cache(tmp_path):
+    """Malformed pdf_index.json is ignored and cache is rebuilt."""
+    cd1 = tmp_path / "CD-001"
+    cd1.mkdir()
+    _make_pdf(cd1, "sheet1.pdf")
+
+    store_dir = tmp_path / ".controlpoint"
+    store_dir.mkdir()
+    (store_dir / "pdf_index.json").write_text("not valid json {{{{")
+
+    from nas_store import get_pdf_paths
+    result = get_pdf_paths(tmp_path)
+
+    assert len(result) == 1
+    assert result[0].name == "sheet1.pdf"
+    # Cache should now be valid
+    data = json.loads((store_dir / "pdf_index.json").read_text())
+    assert data["version"] == 1
+
+
+def test_unreachable_folder_falls_back_to_rglob(tmp_path):
+    """If the input_folder doesn't exist, falls back to rglob (returns empty list)."""
+    from nas_store import get_pdf_paths
+    missing = tmp_path / "does_not_exist"
+    result = get_pdf_paths(missing)
+    assert result == []
