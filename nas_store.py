@@ -132,7 +132,8 @@ def _cached_get_pdf_paths(input_folder: Path, log=None) -> list[Path]:
                 )
                 new_folders_data[name] = {"mtime": mtime, "pdfs": rel_paths}
 
-    _write_index(input_folder, new_folders_data)
+    if stale:
+        _write_index(input_folder, new_folders_data)
 
     all_paths = []
     for folder_data in new_folders_data.values():

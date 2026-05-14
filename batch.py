@@ -366,7 +366,7 @@ def run_batch(input_folder, output_folder, log=None, progress=None,
     pdf_paths = nas_store.get_pdf_paths(input_folder, log=log)
     registry_path = nas_store.get_registry_path(
         input_folder,
-        local_fallback=Path("point_id_registry.json"),
+        local_fallback=Path(__file__).parent / "point_id_registry.json",
     )
     return _run_pdf_list(
         pdf_paths,
@@ -386,6 +386,7 @@ def run_multi(pdf_paths: list[str | Path], output_folder, log=None, progress=Non
     paths = [Path(p) for p in (pdf_paths or [])]
     paths = [p for p in paths if p.is_file() and p.suffix.lower() == ".pdf"]
     paths = sorted(paths)
+    # registry_path not set: run_multi processes user-selected files, not NAS batch folders.
     return _run_pdf_list(
         paths,
         output_folder=Path(output_folder),
@@ -403,6 +404,7 @@ def run_single(pdf_path, output_folder, log=None, progress=None,
     pdf_path = Path(pdf_path)
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
+    # registry_path not set: run_single processes a single file, not a NAS batch folder.
     return _run_pdf_list(
         [pdf_path],
         output_folder=output_folder,
