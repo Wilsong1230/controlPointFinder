@@ -72,3 +72,23 @@ if "requests" not in sys.modules:
 
     requests_stub.Session = _Session
     sys.modules["requests"] = requests_stub
+
+# ---- pytesseract -----------------------------------------------------------
+if "pytesseract" not in sys.modules:
+    pytesseract_stub = _make_stub("pytesseract")
+    pytesseract_stub.image_to_string = lambda *a, **kw: ""
+
+    class _TesseractNotFoundError(Exception):
+        pass
+
+    pytesseract_stub.TesseractNotFoundError = _TesseractNotFoundError
+    sys.modules["pytesseract"] = pytesseract_stub
+
+# ---- PIL (Pillow) ----------------------------------------------------------
+if "PIL" not in sys.modules:
+    pil_stub = _make_stub("PIL")
+    pil_image_stub = _make_stub("PIL.Image")
+    pil_image_stub.open = lambda *a, **kw: object()
+    pil_stub.Image = pil_image_stub
+    sys.modules["PIL"] = pil_stub
+    sys.modules["PIL.Image"] = pil_image_stub
