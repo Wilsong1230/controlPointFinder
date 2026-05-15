@@ -85,10 +85,17 @@ def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None)
         page = doc[page_index]
         text = page.get_text("text") or ""
         if len(text) < 50:
+            if log:
+                log(f"  Page {page_index + 1}: sparse text ({len(text)} chars) — running Tesseract OCR…")
             ocr_text = ocr_page(page)
             if ocr_text and ocr_text.strip():
                 text = ocr_text
                 ocr_text_by_page[page_index] = ocr_text
+                if log:
+                    log(f"  Page {page_index + 1}: OCR complete ({len(ocr_text)} chars extracted).")
+            else:
+                if log:
+                    log(f"  Page {page_index + 1}: OCR found no readable text.")
         lower_text = text.lower()
         page_number = page_index + 1
 
