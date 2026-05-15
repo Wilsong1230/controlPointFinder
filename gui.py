@@ -104,6 +104,10 @@ class ControlPointApp:
         self._preview_flagged_records: list[dict] = []
         self._preview_image_photo = None
         self._progress_total = 0
+        self._progress_completed = 0
+        self.skip_ocr_var = tk.BooleanVar(value=False)
+        self._stop_event = threading.Event()
+        self._discard_partial = False
 
         self._review_request_q: queue.Queue = queue.Queue()
         self._review_result_q: queue.Queue = queue.Queue()
@@ -299,6 +303,17 @@ class ControlPointApp:
 
         self.run_button = _primary_btn(action_row, "▶  Run Extraction", self.run_extraction)
         self.run_button.pack(side="left")
+
+        self.skip_ocr_check = tk.Checkbutton(
+            action_row, text="Skip OCR", variable=self.skip_ocr_var,
+            bg=COLORS["bg"], fg=COLORS["text"], selectcolor=COLORS["bg"],
+            activebackground=COLORS["bg"], font=("Arial", 9),
+        )
+        self.skip_ocr_check.pack(side="left", padx=(10, 0))
+
+        self.stop_button = _secondary_btn(
+            action_row, "⏹  Stop", self._on_stop_click, state="disabled")
+        self.stop_button.pack(side="left", padx=(8, 0))
 
         self.open_output_button = _secondary_btn(
             action_row, "Open Output Folder", self.open_output_folder, state="disabled")
@@ -595,6 +610,7 @@ class ControlPointApp:
 
     def _reset_progress(self):
         self._progress_total = 0
+        self._progress_completed = 0
         self.progress_var.set(0.0)
         self.progress_label.config(text="0 / 0 PDFs")
         self.current_file_label.config(text="Current PDF: —")
@@ -612,6 +628,7 @@ class ControlPointApp:
         self.current_file_label.config(text=f"Current PDF: {shown_name}")
 
         done = current if phase == "done" else max(0, current - 1)
+        self._progress_completed = done
         if total <= 0:
             pct = 0.0
         else:
@@ -619,6 +636,60 @@ class ControlPointApp:
 
         self.progress_var.set(pct)
         self.progress_label.config(text=f"{done} / {total} PDFs")
+
+    def _show_stop_dialog(self):
+        n = self._progress_completed
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Stop Extraction")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        choice = {"value": "cancel"}
+
+        tk.Label(
+            dialog,
+            text=f"Stop extraction?\n{n} PDF(s) have been processed so far.",
+            font=("Arial", 10),
+            bg=COLORS.get("bg", "#f5f0eb"),
+            fg=COLORS.get("text", "#1c1917"),
+            justify="center",
+            padx=20, pady=12,
+        ).pack()
+
+        btn_frame = tk.Frame(dialog, bg=COLORS.get("bg", "#f5f0eb"), pady=10)
+        btn_frame.pack()
+
+        def _save():
+            choice["value"] = "save"
+            dialog.destroy()
+
+        def _discard():
+            choice["value"] = "discard"
+            dialog.destroy()
+
+        def _cancel():
+            choice["value"] = "cancel"
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="Save partial results", command=_save,
+                  width=18).pack(side="left", padx=4)
+        tk.Button(btn_frame, text="Discard", command=_discard,
+                  width=10).pack(side="left", padx=4)
+        tk.Button(btn_frame, text="Cancel", command=_cancel,
+                  width=10).pack(side="left", padx=4)
+
+        self.root.wait_window(dialog)
+        return choice["value"]
+
+    def _on_stop_click(self):
+        choice = self._show_stop_dialog()
+        if choice == "save":
+            self._discard_partial = False
+            self._stop_event.set()
+        elif choice == "discard":
+            self._discard_partial = True
+            self._stop_event.set()
+        # "cancel": do nothing
 
     def run_extraction(self):
         input_value = self.input_path.get()
@@ -642,7 +713,11 @@ class ControlPointApp:
                 messagebox.showerror("Missing Output", "Please choose where to save the .zip output package.")
             return
 
+        self._stop_event = threading.Event()
+        self._discard_partial = False
         self.run_button.config(state="disabled")
+        self.skip_ocr_check.config(state="disabled")
+        self.stop_button.config(state="normal")
         self.log_box.delete("1.0", tk.END)
         self.log("Starting extraction...")
         self._reset_progress()
@@ -879,6 +954,8 @@ class ControlPointApp:
                 "progress": progress,
                 "review_request_q": self._review_request_q,
                 "review_result_q": self._review_result_q,
+                "skip_ocr": self.skip_ocr_var.get(),
+                "stop_event": self._stop_event,
             }
 
             if self.output_mode.get() == "folder":
@@ -897,36 +974,55 @@ class ControlPointApp:
                     result = run_batch_packaged(input_value, output_destination, **rkw)
 
             log("")
-            log("Finishing up…")
-            log("Extraction complete.")
-            log(f"PDFs processed: {result['pdf_count']}")
-            log(f"Total records extracted: {result['total_records']}")
-            if "clean_records" in result and "review_records" in result:
-                log(f"Clean export rows: {result.get('clean_records')}")
-                log(f"Needs review rows: {result.get('review_records')}")
-            log(f"Output saved to: {result['delivery_path']}")
-            self._last_delivery_path = result.get("delivery_path")
-            self.root.after(0, lambda: self.open_output_button.config(state="normal"))
+            if result.get("stopped"):
+                if self._discard_partial:
+                    delivery = result.get("delivery_path")
+                    if delivery:
+                        import shutil as _shutil
+                        p = Path(delivery)
+                        if p.is_dir():
+                            _shutil.rmtree(p, ignore_errors=True)
+                        elif p.is_file():
+                            p.unlink(missing_ok=True)
+                    log("Extraction stopped. No output saved.")
+                else:
+                    log("Finishing up…")
+                    log(f"Extraction stopped — partial results saved ({result['pdf_count']} PDF(s) processed).")
+                    log(f"Total records extracted: {result['total_records']}")
+                    log(f"Output saved to: {result.get('delivery_path', '?')}")
+                    self._last_delivery_path = result.get("delivery_path")
+                    self.root.after(0, lambda: self.open_output_button.config(state="normal"))
+            else:
+                log("Finishing up…")
+                log("Extraction complete.")
+                log(f"PDFs processed: {result['pdf_count']}")
+                log(f"Total records extracted: {result['total_records']}")
+                if "clean_records" in result and "review_records" in result:
+                    log(f"Clean export rows: {result.get('clean_records')}")
+                    log(f"Needs review rows: {result.get('review_records')}")
+                log(f"Output saved to: {result['delivery_path']}")
+                self._last_delivery_path = result.get("delivery_path")
+                self.root.after(0, lambda: self.open_output_button.config(state="normal"))
 
-            log("")
-            log("Per-file results:")
+                log("")
+                log("Per-file results:")
 
-            for item in result["results"]:
-                log(
-                    f"{item['pdf']} | "
-                    f"{item['status']} | "
-                    f"{item['valid_count']} records | "
-                    f"pages {item['extraction_pages']}"
+                for item in result["results"]:
+                    log(
+                        f"{item['pdf']} | "
+                        f"{item['status']} | "
+                        f"{item['valid_count']} records | "
+                        f"pages {item['extraction_pages']}"
+                    )
+
+                messagebox.showinfo(
+                    "Done",
+                    "Extraction complete.\n\n"
+                    f"Total records: {result['total_records']}\n"
+                    f"Clean export: {result.get('clean_records', '—')}\n"
+                    f"Needs review: {result.get('review_records', '—')}\n"
+                    "ArcGIS CSV: arcgis_points.csv"
                 )
-
-            messagebox.showinfo(
-                "Done",
-                "Extraction complete.\n\n"
-                f"Total records: {result['total_records']}\n"
-                f"Clean export: {result.get('clean_records', '—')}\n"
-                f"Needs review: {result.get('review_records', '—')}\n"
-                "ArcGIS CSV: arcgis_points.csv"
-            )
 
         except Exception as error:
             self.log(f"ERROR: {error}")
@@ -935,6 +1031,8 @@ class ControlPointApp:
         finally:
             self.root.after(0, self._stop_review_polling)
             self.run_button.config(state="normal")
+            self.skip_ocr_check.config(state="normal")
+            self.stop_button.config(state="disabled")
 
     def open_output_folder(self):
         path = self._last_delivery_path
