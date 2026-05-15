@@ -84,3 +84,22 @@ def test_scan_skips_ocr_when_page_has_sufficient_text():
             scan_and_extract_metadata("fake.pdf")
 
     mock_ocr.assert_not_called()
+
+
+def test_skip_ocr_prevents_ocr_call_on_sparse_page():
+    import fitz
+    from unittest.mock import MagicMock, patch
+    from control_point import scan_and_extract_metadata
+
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = "tiny"  # fewer than 50 chars
+
+    mock_doc = MagicMock()
+    mock_doc.__len__ = lambda self: 1
+    mock_doc.__getitem__ = lambda self, i: mock_page
+
+    with patch.object(fitz, "open", return_value=mock_doc):
+        with patch("control_point.ocr_page") as mock_ocr:
+            scan_and_extract_metadata("fake.pdf", skip_ocr=True)
+
+    mock_ocr.assert_not_called()

@@ -63,7 +63,7 @@ def scanner(pdf_path, log=None, verbose=False):
     )
     return extraction_pages, reference_pages
 
-def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None):
+def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None, skip_ocr=False):
     """Single fitz pass: returns (metadata, extraction_page_indices, reference_page_indices, ocr_text_by_page)."""
     import fitz
     metadata = {
@@ -84,7 +84,7 @@ def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None)
     for page_index in range(len(doc)):
         page = doc[page_index]
         text = page.get_text("text") or ""
-        if len(text) < 50:
+        if len(text) < 50 and not skip_ocr:
             if log:
                 log(f"  Page {page_index + 1}: sparse text ({len(text)} chars) — running Tesseract OCR…")
             ocr_text = ocr_page(page)
@@ -339,7 +339,7 @@ def write_csv(records, output_path):
         for record in records:
             writer.writerow(record)
 
-def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardize=True, pdf_bytes=None):
+def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardize=True, pdf_bytes=None, skip_ocr=False):
     """
     do_standardize=False: skip datum standardization, confidence scoring, and ID
     assignment — the batch runner performs those steps in the main process after
@@ -352,7 +352,7 @@ def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardiz
     if log:
         log("  Scanning pages to find control point tables…")
     metadata, extraction_page_indices, reference_page_indices, ocr_text_by_page = scan_and_extract_metadata(
-        pdf_path, log=log, verbose=False, pdf_bytes=pdf_bytes
+        pdf_path, log=log, verbose=False, pdf_bytes=pdf_bytes, skip_ocr=skip_ocr
     )
 
     if log:

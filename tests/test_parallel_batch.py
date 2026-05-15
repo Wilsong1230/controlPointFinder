@@ -21,7 +21,7 @@ def test_process_single_pdf_success():
     with patch("pathlib.Path.read_bytes", return_value=b"fake pdf bytes"), \
          patch("batch.run_control_point_pipeline", return_value=_FAKE_PIPELINE_RESULT):
         from batch import _process_single_pdf
-        result = _process_single_pdf(("fake.pdf", "out.csv"))
+        result = _process_single_pdf(("fake.pdf", "out.csv", False))
     assert result["ok"] is True
     assert result["pdf_path"] == "fake.pdf"
     assert result["output_csv"] == "out.csv"
@@ -32,7 +32,7 @@ def test_process_single_pdf_handles_exception():
     with patch("pathlib.Path.read_bytes", return_value=b"fake pdf bytes"), \
          patch("batch.run_control_point_pipeline", side_effect=RuntimeError("bad pdf")):
         from batch import _process_single_pdf
-        result = _process_single_pdf(("bad.pdf", "out.csv"))
+        result = _process_single_pdf(("bad.pdf", "out.csv", False))
     assert result["ok"] is False
     assert "bad pdf" in result["error"]
     assert result["pdf_path"] == "bad.pdf"
@@ -268,3 +268,13 @@ def test_chunked_batch_uses_multiple_executor_instances():
             )
 
     assert len(pool_instances) == 3, f"Expected 3 executor instances (chunks), got {len(pool_instances)}"
+
+
+def test_process_single_pdf_passes_skip_ocr_to_pipeline():
+    with patch("pathlib.Path.read_bytes", return_value=b"fake pdf bytes"), \
+         patch("batch.run_control_point_pipeline", return_value=_FAKE_PIPELINE_RESULT) as mock_pipeline:
+        from batch import _process_single_pdf
+        _process_single_pdf(("fake.pdf", "out.csv", True))
+
+    _, kwargs = mock_pipeline.call_args
+    assert kwargs.get("skip_ocr") is True
