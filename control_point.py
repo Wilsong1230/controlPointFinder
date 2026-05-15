@@ -226,36 +226,48 @@ def validate_record(record):
 
     return True
 
-def extract_control_points(pdf_path, page_indices, log=None, pdf_bytes=None):
+def extract_control_points(pdf_path, page_indices, log=None, pdf_bytes=None, ocr_text_by_page=None):
     import pdfplumber
     import io
 
     all_records = []
+    ocr_pages = set(ocr_text_by_page or {})
+    pdfplumber_indices = [i for i in page_indices if i not in ocr_pages]
 
-    src = io.BytesIO(pdf_bytes) if pdf_bytes is not None else pdf_path
-    with pdfplumber.open(src) as pdf:
-        for page_index in page_indices:
-            if log:
-                log(f"  Extracting table from page {page_index + 1}…")
+    for page_index in (i for i in page_indices if i in ocr_pages):
+        if log:
+            log(f"  OCR text available for page {page_index + 1}, using regex parser…")
+        records = parse_blob_records(ocr_text_by_page[page_index])
+        for record in records:
+            record["source_page"] = page_index + 1
+            record["table_score"] = 0
+        all_records.extend(records)
 
-            page = pdf.pages[page_index]
-            table, score = find_best_table(page)
-
-            if table is None:
+    if pdfplumber_indices:
+        src = io.BytesIO(pdf_bytes) if pdf_bytes is not None else pdf_path
+        with pdfplumber.open(src) as pdf:
+            for page_index in pdfplumber_indices:
                 if log:
-                    log(f"  No table detected on page {page_index + 1}.")
-                continue
+                    log(f"  Extracting table from page {page_index + 1}…")
 
-            if log:
-                log(f"  Table detected (confidence score {score}). Parsing rows…")
+                page = pdf.pages[page_index]
+                table, score = find_best_table(page)
 
-            records = parse_vertical_control_table(table)
+                if table is None:
+                    if log:
+                        log(f"  No table detected on page {page_index + 1}.")
+                    continue
 
-            for record in records:
-                record["source_page"] = page_index + 1
-                record["table_score"] = score
+                if log:
+                    log(f"  Table detected (confidence score {score}). Parsing rows…")
 
-            all_records.extend(records)
+                records = parse_vertical_control_table(table)
+
+                for record in records:
+                    record["source_page"] = page_index + 1
+                    record["table_score"] = score
+
+                all_records.extend(records)
 
     return all_records
 
@@ -343,7 +355,7 @@ def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardiz
         else:
             log("  No control point table pages found.")
 
-    records = extract_control_points(pdf_path, extraction_page_indices, log=log, pdf_bytes=pdf_bytes)
+    records = extract_control_points(pdf_path, extraction_page_indices, log=log, pdf_bytes=pdf_bytes, ocr_text_by_page=ocr_text_by_page)
 
     all_records = []
 
