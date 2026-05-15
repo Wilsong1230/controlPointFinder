@@ -310,7 +310,8 @@ def _run_pdf_list(
     # --- Review gate ---
     low_conf, other_records = _split_low_confidence(all_valid_records)
 
-    if low_conf and review_request_q is not None and review_result_q is not None:
+    if low_conf and review_request_q is not None and review_result_q is not None \
+            and not (stop_event and stop_event.is_set()):
         if tee_log:
             tee_log(f"  Found {len(low_conf)} low-confidence record(s) — sending to review modal…")
         pdf_path_map = {p.name: str(p) for p in pdf_paths}

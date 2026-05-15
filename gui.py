@@ -987,7 +987,8 @@ class ControlPointApp:
                     log("Extraction stopped. No output saved.")
                 else:
                     log("Finishing up…")
-                    log(f"Extraction stopped — partial results saved ({result['pdf_count']} PDF(s) processed).")
+                    processed = len(result.get("results", []))
+                    log(f"Extraction stopped — partial results saved ({processed} PDF(s) processed).")
                     log(f"Total records extracted: {result['total_records']}")
                     log(f"Output saved to: {result.get('delivery_path', '?')}")
                     self._last_delivery_path = result.get("delivery_path")
@@ -1030,7 +1031,7 @@ class ControlPointApp:
 
         finally:
             self.root.after(0, self._stop_review_polling)
-            self.run_button.config(state="normal")
+            self.root.after(0, lambda: self.run_button.config(state="normal"))
             self.root.after(0, lambda: self.skip_ocr_check.config(state="normal"))
             self.root.after(0, lambda: self.stop_button.config(state="disabled"))
 
