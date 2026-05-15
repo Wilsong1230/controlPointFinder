@@ -71,15 +71,13 @@ def test_configure_tesseract_sets_cmd_when_frozen_and_binary_exists():
     fake_exe = os.path.join('/', 'fake', 'ControlPointExtractor', 'ControlPointExtractor.exe')
     expected_cmd = os.path.join(os.path.dirname(fake_exe), 'Tesseract-OCR', 'tesseract.exe')
 
-    sys.frozen = True
-    try:
+    with patch.object(sys, 'frozen', True, create=True):
         with patch('sys.executable', fake_exe):
-            with patch('os.path.exists', return_value=True):
+            with patch('ocr.os.path.exists', return_value=True):
                 ocr._configure_tesseract()
-        assert pytesseract.pytesseract.tesseract_cmd == expected_cmd
-    finally:
-        del sys.frozen
-        pytesseract.pytesseract.tesseract_cmd = 'tesseract'
+
+    assert pytesseract.pytesseract.tesseract_cmd == expected_cmd
+    pytesseract.pytesseract.tesseract_cmd = 'tesseract'
 
 
 def test_configure_tesseract_no_op_when_not_frozen():
