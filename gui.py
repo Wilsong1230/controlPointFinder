@@ -1031,8 +1031,8 @@ class ControlPointApp:
         finally:
             self.root.after(0, self._stop_review_polling)
             self.run_button.config(state="normal")
-            self.skip_ocr_check.config(state="normal")
-            self.stop_button.config(state="disabled")
+            self.root.after(0, lambda: self.skip_ocr_check.config(state="normal"))
+            self.root.after(0, lambda: self.stop_button.config(state="disabled"))
 
     def open_output_folder(self):
         path = self._last_delivery_path
