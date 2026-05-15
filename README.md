@@ -50,6 +50,18 @@ pip install -r requirements.txt
 | `pyproj` | Coordinate system handling |
 | `requests` | NCAT API calls |
 | `tkinterdnd2` | Drag-and-drop support |
+| `pytesseract` | Tesseract OCR Python wrapper |
+| `Pillow` | Image handling for scanned page rendering |
+
+**Tesseract binary (required for scanned PDFs):**
+
+```bash
+# macOS
+brew install tesseract
+
+# Ubuntu / Debian
+sudo apt install tesseract-ocr
+```
 
 ## Running
 
