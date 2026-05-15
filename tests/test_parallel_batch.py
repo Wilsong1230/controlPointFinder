@@ -66,3 +66,78 @@ def test_run_single_accepts_workers_param():
     from batch import run_single
     sig = inspect.signature(run_single)
     assert "workers" in sig.parameters
+
+
+def test_progress_current_is_monotonically_increasing():
+    """Progress callback must receive current=1,2,3 even when futures complete in reverse order."""
+    from unittest.mock import MagicMock, patch
+    from batch import _run_pdf_list
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_paths = [Path(tmpdir) / f"{n}.pdf" for n in range(1, 4)]
+        for p in pdf_paths:
+            p.write_bytes(b"%PDF-1.4 fake")
+
+        output_folder = Path(tmpdir) / "out"
+        output_folder.mkdir()
+
+        progress_calls = []
+
+        fake_worker_result = {
+            "ok": True,
+            "pdf_path": "x.pdf",
+            "output_csv": "x.csv",
+            "result": {
+                "records": [],
+                "extraction_pages": [],
+                "reference_pages": [],
+                "parsed_count": 0,
+                "valid_count": 0,
+                "exact_duplicates_removed": 0,
+            },
+        }
+
+        # Three mock futures — each returns the same fake result
+        mock_futures = [MagicMock() for _ in range(3)]
+        for f in mock_futures:
+            f.result.return_value = fake_worker_result
+
+        submit_count = [0]
+
+        def mock_submit(fn, args):
+            idx = submit_count[0]
+            submit_count[0] += 1
+            return mock_futures[idx]
+
+        mock_pool = MagicMock()
+        mock_pool.submit = mock_submit
+        mock_pool.__enter__ = lambda s: mock_pool
+        mock_pool.__exit__ = MagicMock(return_value=False)
+
+        # Return futures in REVERSE submission order (index 3 first, then 2, then 1)
+        # Old code: progress_calls would be [3, 2, 1]
+        # Fixed code: progress_calls should be [1, 2, 3]
+        def fake_as_completed(future_to_index):
+            return sorted(future_to_index.keys(), key=lambda f: future_to_index[f], reverse=True)
+
+        with patch("batch.ThreadPoolExecutor", return_value=mock_pool), \
+             patch("batch.as_completed", fake_as_completed), \
+             patch("batch.standardize_records", side_effect=lambda r, **kw: r), \
+             patch("batch.apply_confidence", side_effect=lambda r: r), \
+             patch("batch.deduplicate_records", side_effect=lambda r, **kw: (r, 0)), \
+             patch("batch.flag_uncertain_duplicates", side_effect=lambda r, **kw: r), \
+             patch("batch.split_clean_vs_review", return_value=([], [])), \
+             patch("batch.assign_system_point_ids"), \
+             patch("batch.write_csv"), \
+             patch("batch.write_arcgis_csv"), \
+             patch("batch._write_summary", return_value=""):
+            _run_pdf_list(
+                pdf_paths,
+                output_folder=output_folder,
+                progress=lambda p: progress_calls.append(p["current"]),
+                workers=3,
+            )
+
+    assert progress_calls == [1, 2, 3], f"Expected [1, 2, 3], got {progress_calls}"

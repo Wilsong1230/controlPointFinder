@@ -227,8 +227,10 @@ def _run_pdf_list(
                 for i in range(1, total + 1)
             }
 
+            completed = 0
             for future in as_completed(future_to_index):
                 i = future_to_index[future]
+                completed += 1
                 pdf_path = pdf_list[i - 1]
                 output_csv_path = final_csv_by_index[i]
                 worker_result = future.result()
@@ -263,7 +265,7 @@ def _run_pdf_list(
                     })
 
                 if progress:
-                    progress({"phase": "done", "current": i, "total": total, "pdf": str(pdf_path)})
+                    progress({"phase": "done", "current": completed, "total": total, "pdf": str(pdf_path)})
 
         # Move staged individual CSVs to the output folder (single batch, no per-PDF NAS writes)
         for staged_csv in sorted(staging_dir.glob("*.csv")):
