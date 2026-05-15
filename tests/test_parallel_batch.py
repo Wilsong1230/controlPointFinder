@@ -278,3 +278,114 @@ def test_process_single_pdf_passes_skip_ocr_to_pipeline():
 
     _, kwargs = mock_pipeline.call_args
     assert kwargs.get("skip_ocr") is True
+
+
+def test_stop_event_set_before_loop_returns_stopped_true():
+    """When stop_event is already set, _run_pdf_list breaks immediately and returns stopped=True."""
+    from unittest.mock import MagicMock, patch
+    from batch import _run_pdf_list
+    import batch
+    import threading
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_paths, output_folder, fake_worker_result = _make_run_pdf_list_mocks(3, tmpdir)
+
+        stop_event = threading.Event()
+        stop_event.set()  # Already stopped before we begin
+
+        submit_count = [0]
+        mock_futures = [MagicMock() for _ in range(3)]
+        for f in mock_futures:
+            f.result.return_value = fake_worker_result
+
+        def mock_submit(fn, args):
+            idx = submit_count[0]
+            submit_count[0] += 1
+            return mock_futures[idx]
+
+        mock_pool = MagicMock()
+        mock_pool.submit = mock_submit
+        mock_pool.__enter__ = lambda s: mock_pool
+        mock_pool.__exit__ = MagicMock(return_value=False)
+
+        with patch("batch.ThreadPoolExecutor", return_value=mock_pool), \
+             patch("batch.as_completed", lambda ftoi: list(ftoi.keys())), \
+             patch("batch.standardize_records", side_effect=lambda r, **kw: r), \
+             patch("batch.apply_confidence", side_effect=lambda r: r), \
+             patch("batch.deduplicate_records", side_effect=lambda r, **kw: (r, 0)), \
+             patch("batch.flag_uncertain_duplicates", side_effect=lambda r, **kw: r), \
+             patch("batch.split_clean_vs_review", return_value=([], [])), \
+             patch("batch.assign_system_point_ids"), \
+             patch("batch.write_csv"), \
+             patch("batch.write_arcgis_csv"), \
+             patch("batch._write_summary", return_value=""):
+            result = _run_pdf_list(
+                pdf_paths,
+                output_folder=output_folder,
+                workers=2,
+                stop_event=stop_event,
+            )
+
+    assert result["stopped"] is True
+
+
+def test_stop_event_mid_run_returns_partial_results():
+    """When stop_event is set after 1 future, _run_pdf_list returns with stopped=True and 1 result."""
+    from unittest.mock import MagicMock, patch
+    from batch import _run_pdf_list
+    import batch
+    import threading
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_paths, output_folder, fake_worker_result = _make_run_pdf_list_mocks(4, tmpdir)
+
+        stop_event = threading.Event()
+
+        submit_count = [0]
+        mock_futures = [MagicMock() for _ in range(4)]
+        for f in mock_futures:
+            f.result.return_value = fake_worker_result
+
+        futures_yielded = [0]
+
+        def mock_submit(fn, args):
+            idx = submit_count[0]
+            submit_count[0] += 1
+            return mock_futures[idx]
+
+        mock_pool = MagicMock()
+        mock_pool.submit = mock_submit
+        mock_pool.__enter__ = lambda s: mock_pool
+        mock_pool.__exit__ = MagicMock(return_value=False)
+
+        # Yield first future, then set stop_event, then yield remaining
+        def fake_as_completed(ftoi):
+            keys = list(ftoi.keys())
+            for k in keys:
+                if futures_yielded[0] == 1:
+                    stop_event.set()
+                futures_yielded[0] += 1
+                yield k
+
+        with patch("batch.ThreadPoolExecutor", return_value=mock_pool), \
+             patch("batch.as_completed", fake_as_completed), \
+             patch("batch.standardize_records", side_effect=lambda r, **kw: r), \
+             patch("batch.apply_confidence", side_effect=lambda r: r), \
+             patch("batch.deduplicate_records", side_effect=lambda r, **kw: (r, 0)), \
+             patch("batch.flag_uncertain_duplicates", side_effect=lambda r, **kw: r), \
+             patch("batch.split_clean_vs_review", return_value=([], [])), \
+             patch("batch.assign_system_point_ids"), \
+             patch("batch.write_csv"), \
+             patch("batch.write_arcgis_csv"), \
+             patch("batch._write_summary", return_value=""):
+            result = _run_pdf_list(
+                pdf_paths,
+                output_folder=output_folder,
+                workers=2,
+                stop_event=stop_event,
+            )
+
+    assert result["stopped"] is True
+    assert len(result["results"]) == 1

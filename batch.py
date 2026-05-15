@@ -183,6 +183,7 @@ def _run_pdf_list(
     workers: int | None = None,
     registry_path: Path | None = None,
     skip_ocr: bool = False,
+    stop_event=None,
 ):
     if workers is None:
         workers = 8
@@ -229,6 +230,8 @@ def _run_pdf_list(
         ]
         completed = 0
         for chunk_indices in chunks:
+            if stop_event and stop_event.is_set():
+                break
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 future_to_index = {
                     pool.submit(_process_single_pdf, args_by_index[i]): i
@@ -236,6 +239,8 @@ def _run_pdf_list(
                 }
 
                 for future in as_completed(future_to_index):
+                    if stop_event and stop_event.is_set():
+                        break
                     i = future_to_index[future]
                     completed += 1
                     pdf_path = pdf_list[i - 1]
@@ -273,6 +278,9 @@ def _run_pdf_list(
 
                     if progress:
                         progress({"phase": "done", "current": completed, "total": total, "pdf": str(pdf_path)})
+
+                    if stop_event and stop_event.is_set():
+                        break
 
         # Move staged individual CSVs to the output folder (single batch, no per-PDF NAS writes)
         for staged_csv in sorted(staging_dir.glob("*.csv")):
@@ -376,6 +384,7 @@ def _run_pdf_list(
         "review_records": len(review_records),
         "duplicate_points_removed": exact_duplicates_removed_total + cross_removed,
         "found_pdfs": [str(path) for path in pdf_paths],
+        "stopped": bool(stop_event and stop_event.is_set()),
     }
 
 
@@ -398,7 +407,8 @@ def _process_single_pdf(args: tuple) -> dict:
 
 
 def run_batch(input_folder, output_folder, log=None, progress=None,
-              review_request_q=None, review_result_q=None, workers=None, skip_ocr=False):
+              review_request_q=None, review_result_q=None, workers=None, skip_ocr=False,
+              stop_event=None):
     input_folder = Path(input_folder)
     pdf_paths = nas_store.get_pdf_paths(input_folder, log=log)
     registry_path = nas_store.get_registry_path(
@@ -416,11 +426,13 @@ def run_batch(input_folder, output_folder, log=None, progress=None,
         workers=workers,
         registry_path=registry_path,
         skip_ocr=skip_ocr,
+        stop_event=stop_event,
     )
 
 
 def run_multi(pdf_paths: list[str | Path], output_folder, log=None, progress=None,
-              review_request_q=None, review_result_q=None, workers=None, skip_ocr=False):
+              review_request_q=None, review_result_q=None, workers=None, skip_ocr=False,
+              stop_event=None):
     paths = [Path(p) for p in (pdf_paths or [])]
     paths = [p for p in paths if p.is_file() and p.suffix.lower() == ".pdf"]
     paths = sorted(paths)
@@ -435,11 +447,13 @@ def run_multi(pdf_paths: list[str | Path], output_folder, log=None, progress=Non
         review_result_q=review_result_q,
         workers=workers,
         skip_ocr=skip_ocr,
+        stop_event=stop_event,
     )
 
 
 def run_single(pdf_path, output_folder, log=None, progress=None,
-               review_request_q=None, review_result_q=None, workers=None, skip_ocr=False):
+               review_request_q=None, review_result_q=None, workers=None, skip_ocr=False,
+               stop_event=None):
     pdf_path = Path(pdf_path)
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -454,6 +468,7 @@ def run_single(pdf_path, output_folder, log=None, progress=None,
         review_result_q=review_result_q,
         workers=workers,
         skip_ocr=skip_ocr,
+        stop_event=stop_event,
     )
 
 
@@ -501,12 +516,13 @@ def _write_manifest(output_dir, manifest):
 
 
 def run_batch_folder(input_folder, output_folder, log=None, progress=None,
-                     review_request_q=None, review_result_q=None, workers=None, skip_ocr=False):
+                     review_request_q=None, review_result_q=None, workers=None, skip_ocr=False,
+                     stop_event=None):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
     result = run_batch(input_folder, output_folder, log=log, progress=progress,
                        review_request_q=review_request_q, review_result_q=review_result_q,
-                       workers=workers, skip_ocr=skip_ocr)
+                       workers=workers, skip_ocr=skip_ocr, stop_event=stop_event)
     _write_manifest(output_folder, {
         "mode": "folder",
         "input_folder": str(Path(input_folder).resolve()),
@@ -533,12 +549,13 @@ def run_batch_folder(input_folder, output_folder, log=None, progress=None,
 
 
 def run_single_folder(pdf_path, output_folder, log=None, progress=None,
-                      review_request_q=None, review_result_q=None, workers=None, skip_ocr=False):
+                      review_request_q=None, review_result_q=None, workers=None, skip_ocr=False,
+                      stop_event=None):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
     result = run_single(pdf_path, output_folder, log=log, progress=progress,
                         review_request_q=review_request_q, review_result_q=review_result_q,
-                        workers=workers, skip_ocr=skip_ocr)
+                        workers=workers, skip_ocr=skip_ocr, stop_event=stop_event)
     _write_manifest(
         output_folder,
         {
@@ -568,14 +585,15 @@ def run_single_folder(pdf_path, output_folder, log=None, progress=None,
 
 
 def run_batch_packaged(input_folder, package_path, log=None, progress=None,
-                       review_request_q=None, review_result_q=None, workers=None, skip_ocr=False):
+                       review_request_q=None, review_result_q=None, workers=None, skip_ocr=False,
+                       stop_event=None):
     package_path = Path(package_path)
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
         result = run_batch(input_folder, tmp_output, log=log, progress=progress,
                            review_request_q=review_request_q, review_result_q=review_result_q,
-                           workers=workers, skip_ocr=skip_ocr)
+                           workers=workers, skip_ocr=skip_ocr, stop_event=stop_event)
 
         _write_manifest(
             tmp_output,
@@ -613,14 +631,15 @@ def run_batch_packaged(input_folder, package_path, log=None, progress=None,
 
 
 def run_single_packaged(pdf_path, package_path, log=None, progress=None,
-                        review_request_q=None, review_result_q=None, workers=None, skip_ocr=False):
+                        review_request_q=None, review_result_q=None, workers=None, skip_ocr=False,
+                        stop_event=None):
     package_path = Path(package_path)
 
     with tempfile.TemporaryDirectory(prefix="control_point_outputs_") as tmpdir:
         tmp_output = Path(tmpdir)
         result = run_single(pdf_path, tmp_output, log=log, progress=progress,
                             review_request_q=review_request_q, review_result_q=review_result_q,
-                            workers=workers, skip_ocr=skip_ocr)
+                            workers=workers, skip_ocr=skip_ocr, stop_event=stop_event)
 
         _write_manifest(
             tmp_output,
@@ -658,7 +677,8 @@ def run_single_packaged(pdf_path, package_path, log=None, progress=None,
 
 
 def run_multi_packaged(pdf_paths: list[str | Path], package_path, log=None, progress=None,
-                       review_request_q=None, review_result_q=None, workers=None, skip_ocr=False):
+                       review_request_q=None, review_result_q=None, workers=None, skip_ocr=False,
+                       stop_event=None):
     """
     Multi-select equivalent of run_batch_packaged/run_single_packaged.
     Creates a normal output folder in a temp dir and zips it.
@@ -669,7 +689,7 @@ def run_multi_packaged(pdf_paths: list[str | Path], package_path, log=None, prog
         tmp_output = Path(tmpdir)
         result = run_multi(pdf_paths, tmp_output, log=log, progress=progress,
                            review_request_q=review_request_q, review_result_q=review_result_q,
-                           workers=workers, skip_ocr=skip_ocr)
+                           workers=workers, skip_ocr=skip_ocr, stop_event=stop_event)
 
         _write_manifest(
             tmp_output,
