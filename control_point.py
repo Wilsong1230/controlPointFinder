@@ -7,6 +7,7 @@ from datum_standardization import standardize_records
 from data_validation import validate_and_normalize_records
 from output_control import deduplicate_records, flag_uncertain_duplicates
 from point_id import assign_system_point_ids
+from ocr import ocr_page
 
 
 PDF_PATH = "sample.pdf"
@@ -83,6 +84,11 @@ def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None)
     for page_index in range(len(doc)):
         page = doc[page_index]
         text = page.get_text("text") or ""
+        if len(text) < 50:
+            ocr_text = ocr_page(page)
+            if ocr_text:
+                text = ocr_text
+                ocr_text_by_page[page_index] = ocr_text
         lower_text = text.lower()
         page_number = page_index + 1
 

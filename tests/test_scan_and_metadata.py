@@ -44,3 +44,43 @@ def test_empty_pdf_returns_empty_page_lists():
     metadata, extraction_pages, reference_pages, ocr_text_by_page = scan_and_extract_metadata("fake.pdf")
     assert extraction_pages == []
     assert reference_pages == []
+
+
+def test_scan_calls_ocr_when_page_text_is_sparse():
+    import fitz
+    from unittest.mock import MagicMock
+    from control_point import scan_and_extract_metadata
+
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = "tiny"  # fewer than 50 chars
+
+    mock_doc = MagicMock()
+    mock_doc.__len__ = lambda self: 1
+    mock_doc.__getitem__ = lambda self, i: mock_page
+
+    with patch.object(fitz, "open", return_value=mock_doc):
+        with patch("control_point.ocr_page", return_value="northing easting elevation control point\n1 100.0 200.0 50.0 BENCH") as mock_ocr:
+            _, _, _, ocr_text_by_page = scan_and_extract_metadata("fake.pdf")
+
+    mock_ocr.assert_called_once_with(mock_page)
+    assert 0 in ocr_text_by_page
+    assert "northing" in ocr_text_by_page[0]
+
+
+def test_scan_skips_ocr_when_page_has_sufficient_text():
+    import fitz
+    from unittest.mock import MagicMock
+    from control_point import scan_and_extract_metadata
+
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = "x" * 100  # more than 50 chars
+
+    mock_doc = MagicMock()
+    mock_doc.__len__ = lambda self: 1
+    mock_doc.__getitem__ = lambda self, i: mock_page
+
+    with patch.object(fitz, "open", return_value=mock_doc):
+        with patch("control_point.ocr_page") as mock_ocr:
+            scan_and_extract_metadata("fake.pdf")
+
+    mock_ocr.assert_not_called()
