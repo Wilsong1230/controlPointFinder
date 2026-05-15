@@ -19,6 +19,7 @@ REVIEW_CSV_NAME = "needs_review.csv"
 LOG_TXT_NAME = "extraction_log.txt"
 SUMMARY_TXT_NAME = "extraction_summary.txt"
 ARCGIS_CSV_NAME = "arcgis_points.csv"
+_CHUNK_SIZE = 400
 
 
 def _split_flags(value) -> list[str]:
@@ -221,51 +222,56 @@ def _run_pdf_list(
             for i in range(1, total + 1)
         }
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            future_to_index = {
-                pool.submit(_process_single_pdf, args_by_index[i]): i
-                for i in range(1, total + 1)
-            }
+        chunks = [
+            list(range(i, min(i + _CHUNK_SIZE, total + 1)))
+            for i in range(1, total + 1, _CHUNK_SIZE)
+        ]
+        completed = 0
+        for chunk_indices in chunks:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                future_to_index = {
+                    pool.submit(_process_single_pdf, args_by_index[i]): i
+                    for i in chunk_indices
+                }
 
-            completed = 0
-            for future in as_completed(future_to_index):
-                i = future_to_index[future]
-                completed += 1
-                pdf_path = pdf_list[i - 1]
-                output_csv_path = final_csv_by_index[i]
-                worker_result = future.result()
+                for future in as_completed(future_to_index):
+                    i = future_to_index[future]
+                    completed += 1
+                    pdf_path = pdf_list[i - 1]
+                    output_csv_path = final_csv_by_index[i]
+                    worker_result = future.result()
 
-                if worker_result["ok"]:
-                    result = worker_result["result"]
-                    all_valid_records.extend(result["records"])
-                    exact_duplicates_removed_total += int(result.get("exact_duplicates_removed") or 0)
-                    if tee_log:
-                        tee_log(f"[{i}/{total}] Done: {pdf_path.name} — {result['valid_count']} record(s)")
-                    results.append({
-                        "pdf": str(pdf_path),
-                        "output_csv": output_csv_path,
-                        "extraction_pages": result["extraction_pages"],
-                        "reference_pages": result["reference_pages"],
-                        "parsed_count": result["parsed_count"],
-                        "valid_count": result["valid_count"],
-                        "status": "success",
-                    })
-                else:
-                    error = worker_result["error"]
-                    if tee_log:
-                        tee_log(f"[{i}/{total}] Failed: {pdf_path.name} — {error}")
-                    results.append({
-                        "pdf": pdf_path.name,
-                        "output_csv": "",
-                        "extraction_pages": [],
-                        "reference_pages": [],
-                        "parsed_count": 0,
-                        "valid_count": 0,
-                        "status": f"failed: {error}",
-                    })
+                    if worker_result["ok"]:
+                        result = worker_result["result"]
+                        all_valid_records.extend(result["records"])
+                        exact_duplicates_removed_total += int(result.get("exact_duplicates_removed") or 0)
+                        if tee_log:
+                            tee_log(f"[{i}/{total}] Done: {pdf_path.name} — {result['valid_count']} record(s)")
+                        results.append({
+                            "pdf": str(pdf_path),
+                            "output_csv": output_csv_path,
+                            "extraction_pages": result["extraction_pages"],
+                            "reference_pages": result["reference_pages"],
+                            "parsed_count": result["parsed_count"],
+                            "valid_count": result["valid_count"],
+                            "status": "success",
+                        })
+                    else:
+                        error = worker_result["error"]
+                        if tee_log:
+                            tee_log(f"[{i}/{total}] Failed: {pdf_path.name} — {error}")
+                        results.append({
+                            "pdf": pdf_path.name,
+                            "output_csv": "",
+                            "extraction_pages": [],
+                            "reference_pages": [],
+                            "parsed_count": 0,
+                            "valid_count": 0,
+                            "status": f"failed: {error}",
+                        })
 
-                if progress:
-                    progress({"phase": "done", "current": completed, "total": total, "pdf": str(pdf_path)})
+                    if progress:
+                        progress({"phase": "done", "current": completed, "total": total, "pdf": str(pdf_path)})
 
         # Move staged individual CSVs to the output folder (single batch, no per-PDF NAS writes)
         for staged_csv in sorted(staging_dir.glob("*.csv")):

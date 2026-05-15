@@ -141,3 +141,130 @@ def test_progress_current_is_monotonically_increasing():
             )
 
     assert progress_calls == [1, 2, 3], f"Expected [1, 2, 3], got {progress_calls}"
+
+
+def _make_run_pdf_list_mocks(n_pdfs, tmpdir):
+    """Shared mock setup for _run_pdf_list chunking tests."""
+    from unittest.mock import MagicMock
+    from pathlib import Path
+
+    pdf_paths = [Path(tmpdir) / f"{n}.pdf" for n in range(1, n_pdfs + 1)]
+    for p in pdf_paths:
+        p.write_bytes(b"%PDF-1.4 fake")
+
+    output_folder = Path(tmpdir) / "out"
+    output_folder.mkdir()
+
+    fake_worker_result = {
+        "ok": True,
+        "pdf_path": "x.pdf",
+        "output_csv": "x.csv",
+        "result": {
+            "records": [],
+            "extraction_pages": [],
+            "reference_pages": [],
+            "parsed_count": 0,
+            "valid_count": 0,
+            "exact_duplicates_removed": 0,
+        },
+    }
+    return pdf_paths, output_folder, fake_worker_result
+
+
+def test_chunked_batch_processes_all_pdfs():
+    """With _CHUNK_SIZE=2 and 5 PDFs, all 5 complete and progress reaches 5."""
+    from unittest.mock import MagicMock, patch
+    from batch import _run_pdf_list
+    import batch
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_paths, output_folder, fake_worker_result = _make_run_pdf_list_mocks(5, tmpdir)
+
+        progress_calls = []
+        submit_count = [0]
+        mock_futures = [MagicMock() for _ in range(5)]
+        for f in mock_futures:
+            f.result.return_value = fake_worker_result
+
+        def mock_submit(fn, args):
+            idx = submit_count[0]
+            submit_count[0] += 1
+            return mock_futures[idx]
+
+        mock_pool = MagicMock()
+        mock_pool.submit = mock_submit
+        mock_pool.__enter__ = lambda s: mock_pool
+        mock_pool.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(batch, "_CHUNK_SIZE", 2), \
+             patch("batch.ThreadPoolExecutor", return_value=mock_pool), \
+             patch("batch.as_completed", lambda ftoi: list(ftoi.keys())), \
+             patch("batch.standardize_records", side_effect=lambda r, **kw: r), \
+             patch("batch.apply_confidence", side_effect=lambda r: r), \
+             patch("batch.deduplicate_records", side_effect=lambda r, **kw: (r, 0)), \
+             patch("batch.flag_uncertain_duplicates", side_effect=lambda r, **kw: r), \
+             patch("batch.split_clean_vs_review", return_value=([], [])), \
+             patch("batch.assign_system_point_ids"), \
+             patch("batch.write_csv"), \
+             patch("batch.write_arcgis_csv"), \
+             patch("batch._write_summary", return_value=""):
+            _run_pdf_list(
+                pdf_paths,
+                output_folder=output_folder,
+                progress=lambda p: progress_calls.append(p["current"]),
+                workers=2,
+            )
+
+    assert progress_calls == [1, 2, 3, 4, 5], f"Expected [1,2,3,4,5], got {progress_calls}"
+
+
+def test_chunked_batch_uses_multiple_executor_instances():
+    """With _CHUNK_SIZE=2 and 5 PDFs, ThreadPoolExecutor is instantiated 3 times (ceil(5/2)=3 chunks)."""
+    from unittest.mock import MagicMock, patch
+    from batch import _run_pdf_list
+    import batch
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_paths, output_folder, fake_worker_result = _make_run_pdf_list_mocks(5, tmpdir)
+
+        submit_count = [0]
+        mock_futures = [MagicMock() for _ in range(5)]
+        for f in mock_futures:
+            f.result.return_value = fake_worker_result
+
+        def mock_submit(fn, args):
+            idx = submit_count[0]
+            submit_count[0] += 1
+            return mock_futures[idx]
+
+        pool_instances = []
+
+        def make_pool(*args, **kwargs):
+            pool = MagicMock()
+            pool.submit = mock_submit
+            pool.__enter__ = lambda s: pool
+            pool.__exit__ = MagicMock(return_value=False)
+            pool_instances.append(pool)
+            return pool
+
+        with patch.object(batch, "_CHUNK_SIZE", 2), \
+             patch("batch.ThreadPoolExecutor", side_effect=make_pool), \
+             patch("batch.as_completed", lambda ftoi: list(ftoi.keys())), \
+             patch("batch.standardize_records", side_effect=lambda r, **kw: r), \
+             patch("batch.apply_confidence", side_effect=lambda r: r), \
+             patch("batch.deduplicate_records", side_effect=lambda r, **kw: (r, 0)), \
+             patch("batch.flag_uncertain_duplicates", side_effect=lambda r, **kw: r), \
+             patch("batch.split_clean_vs_review", return_value=([], [])), \
+             patch("batch.assign_system_point_ids"), \
+             patch("batch.write_csv"), \
+             patch("batch.write_arcgis_csv"), \
+             patch("batch._write_summary", return_value=""):
+            _run_pdf_list(
+                pdf_paths,
+                output_folder=output_folder,
+                workers=2,
+            )
+
+    assert len(pool_instances) == 3, f"Expected 3 executor instances (chunks), got {len(pool_instances)}"
