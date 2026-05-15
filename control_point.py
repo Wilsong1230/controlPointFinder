@@ -13,7 +13,7 @@ PDF_PATH = "sample.pdf"
 
 
 def extract_project_metadata(pdf_path):
-    metadata, _, _ = scan_and_extract_metadata(pdf_path)
+    metadata, _, _, _ = scan_and_extract_metadata(pdf_path)
     return metadata
 
 def analyze_page(text):
@@ -57,13 +57,13 @@ def analyze_page(text):
     return classification
 
 def scanner(pdf_path, log=None, verbose=False):
-    _, extraction_pages, reference_pages = scan_and_extract_metadata(
+    _, extraction_pages, reference_pages, _ = scan_and_extract_metadata(
         pdf_path, log=log, verbose=verbose
     )
     return extraction_pages, reference_pages
 
 def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None):
-    """Single fitz pass: returns (metadata, extraction_page_indices, reference_page_indices)."""
+    """Single fitz pass: returns (metadata, extraction_page_indices, reference_page_indices, ocr_text_by_page)."""
     import fitz
     metadata = {
         "horizontal_datum": "",
@@ -74,6 +74,7 @@ def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None)
     }
     extraction_pages = []
     reference_pages = []
+    ocr_text_by_page = {}
 
     if pdf_bytes is not None:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -116,7 +117,7 @@ def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None)
                 metadata["coordinate_system"] = "State Plane"
 
     doc.close()
-    return metadata, extraction_pages, reference_pages
+    return metadata, extraction_pages, reference_pages, ocr_text_by_page
 
 def parse_blob_records(text):
     records = []
@@ -325,7 +326,7 @@ def run_control_point_pipeline(pdf_path, output_path, log=None, *, do_standardiz
         log("  Reading project metadata…")
     if log:
         log("  Scanning pages to find control point tables…")
-    metadata, extraction_page_indices, reference_page_indices = scan_and_extract_metadata(
+    metadata, extraction_page_indices, reference_page_indices, ocr_text_by_page = scan_and_extract_metadata(
         pdf_path, log=log, verbose=False, pdf_bytes=pdf_bytes
     )
 
