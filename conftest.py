@@ -82,7 +82,13 @@ if "pytesseract" not in sys.modules:
         pass
 
     pytesseract_stub.TesseractNotFoundError = _TesseractNotFoundError
+
+    _pytesseract_inner = _make_stub("pytesseract.pytesseract")
+    _pytesseract_inner.tesseract_cmd = "tesseract"
+    pytesseract_stub.pytesseract = _pytesseract_inner
+
     sys.modules["pytesseract"] = pytesseract_stub
+    sys.modules["pytesseract.pytesseract"] = _pytesseract_inner
 
 # ---- PIL (Pillow) ----------------------------------------------------------
 if "PIL" not in sys.modules:

@@ -1,4 +1,19 @@
 import io
+import os
+import sys
+
+
+def _configure_tesseract():
+    if not getattr(sys, 'frozen', False):
+        return
+    exe_dir = os.path.dirname(sys.executable)
+    tesseract_cmd = os.path.join(exe_dir, 'Tesseract-OCR', 'tesseract.exe')
+    if os.path.exists(tesseract_cmd):
+        import pytesseract
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+
+_configure_tesseract()
 
 
 def ocr_page(fitz_page):

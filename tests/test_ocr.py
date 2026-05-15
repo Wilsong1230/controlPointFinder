@@ -60,3 +60,35 @@ def test_ocr_page_returns_empty_string_when_image_open_fails():
         result = ocr_page(mock_page)
 
     assert result == ""
+
+
+def test_configure_tesseract_sets_cmd_when_frozen_and_binary_exists():
+    import sys
+    import os
+    import pytesseract
+    import ocr
+
+    fake_exe = os.path.join('/', 'fake', 'ControlPointExtractor', 'ControlPointExtractor.exe')
+    expected_cmd = os.path.join(os.path.dirname(fake_exe), 'Tesseract-OCR', 'tesseract.exe')
+
+    sys.frozen = True
+    try:
+        with patch('sys.executable', fake_exe):
+            with patch('os.path.exists', return_value=True):
+                ocr._configure_tesseract()
+        assert pytesseract.pytesseract.tesseract_cmd == expected_cmd
+    finally:
+        del sys.frozen
+        pytesseract.pytesseract.tesseract_cmd = 'tesseract'
+
+
+def test_configure_tesseract_no_op_when_not_frozen():
+    import pytesseract
+    import ocr
+
+    original_cmd = pytesseract.pytesseract.tesseract_cmd
+
+    # sys.frozen is not set in normal/test runs — function should be a no-op
+    ocr._configure_tesseract()
+
+    assert pytesseract.pytesseract.tesseract_cmd == original_cmd
