@@ -86,7 +86,7 @@ def scan_and_extract_metadata(pdf_path, log=None, verbose=False, pdf_bytes=None)
         text = page.get_text("text") or ""
         if len(text) < 50:
             ocr_text = ocr_page(page)
-            if ocr_text:
+            if ocr_text and ocr_text.strip():
                 text = ocr_text
                 ocr_text_by_page[page_index] = ocr_text
         lower_text = text.lower()

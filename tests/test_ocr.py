@@ -46,3 +46,17 @@ def test_ocr_page_returns_empty_string_when_pixmap_fails():
     result = ocr_page(mock_page)
 
     assert result == ""
+
+
+def test_ocr_page_returns_empty_string_when_image_open_fails():
+    from ocr import ocr_page
+
+    mock_page = MagicMock()
+    mock_pixmap = MagicMock()
+    mock_pixmap.tobytes.return_value = b"not a valid png"
+    mock_page.get_pixmap.return_value = mock_pixmap
+
+    with patch("PIL.Image.open", side_effect=OSError("invalid image")):
+        result = ocr_page(mock_page)
+
+    assert result == ""
